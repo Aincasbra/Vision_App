@@ -1,0 +1,52 @@
+# 🎥 YOLOCAMARA - Dependencias StApi
+# 
+# Este archivo contiene las dependencias necesarias para ejecutar
+# los scripts StApi del proyecto YOLOCAMARA.
+#
+# Scripts que usan estas dependencias:
+# - save_video_python_stapi_real.py
+# - vista_stapi.py
+# - vista_directo_consola.py (si existiera)
+#
+# Autor: YOLOCAMARA Team
+# Fecha: 2024
+
+# =============================================================================
+# 📹 DEPENDENCIAS STAPI (Con entorno virtual Python 3.9+)
+# =============================================================================
+
+# OpenCV con contribuciones (para interfaz gráfica y procesamiento de imagen)
+opencv-contrib-python>=4.8.0
+
+# NumPy para operaciones numéricas y arrays
+numpy>=1.24.0
+
+# Python.NET para interoperabilidad con StApi (.NET)
+pythonnet>=3.0.0
+
+# =============================================================================
+# 🔧 DEPENDENCIAS DE DESARROLLO (Opcionales)
+# =============================================================================
+
+# Herramientas de desarrollo
+wheel>=0.45.0
+setuptools>=75.3.0
+
+# =============================================================================
+# 📋 INSTALACIÓN
+# =============================================================================
+#
+# 1. Crear entorno virtual Python 3.9+:
+#    py -3.9 -m venv venv_stapi
+#
+# 2. Activar entorno virtual:
+#    Windows: .\venv_stapi\Scripts\activate
+#    Linux/Mac: source venv_stapi/bin/activate
+#
+# 3. Instalar dependencias:
+#    pip install -r requirements_stapi.txt
+#
+# NOTA: Usar entorno virtual para evitar conflictos con GenTL
+# y mantener versiones específicas de OpenCV/NumPy
+#
+# =============================================================================
