@@ -1,0 +1,278 @@
+# 🎥 YOLOCAMARA - Archivos a Ignorar en Git
+# 
+# Este archivo especifica qué archivos y directorios Git debe ignorar
+# al hacer commit y push al repositorio.
+#
+# Autor: YOLOCAMARA Team
+# Fecha: 2024
+
+# =============================================================================
+# 🐍 ENTORNOS VIRTUALES PYTHON
+# =============================================================================
+
+# Entorno virtual GenTL
+venv_gentl/
+venv_gentl_38/
+venv_gentl_39/
+
+gentl/.venv
+gentl/.venv_BKP
+
+
+# Entornos virtuales genéricos
+venv/env/
+ENV/
+env.bak/
+venv.bak/
+
+# =============================================================================
+# 📁 ARCHIVOS DE PYTHON
+# =============================================================================
+
+# Bytecode compilado
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribución / empaquetado
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unidad de pruebas / cobertura
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# =============================================================================
+# 🔧 ENTORNOS DE DESARROLLO
+# =============================================================================
+
+# IDEs y editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# =============================================================================
+# 🎬 ARCHIVOS DE VIDEO Y MEDIA
+# =============================================================================
+
+# Videos grabados (pueden ser muy grandes)
+stapi/Videos/
+*.avi
+*.mp4
+*.mov
+*.mkv
+
+# Imágenes de prueba
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tiff
+
+# =============================================================================
+# 📊 ARCHIVOS DE DATOS Y LOGS
+# =============================================================================
+
+# Logs del sistema
+*.log
+logs/
+
+# Archivos de datos temporales
+*.tmp
+*.temp
+*.cache
+
+# Archivos de configuración local
+config_local.py
+.env
+.env.local
+
+# =============================================================================
+# 🖥️ ARCHIVOS DEL SISTEMA OPERATIVO
+# =============================================================================
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.tmp
+*.temp
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# =============================================================================
+# 🔒 ARCHIVOS SENSIBLES
+# =============================================================================
+
+# Contraseñas y claves
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+
+# Archivos de configuración con datos sensibles
+secrets.py
+credentials.py
+api_keys.py
+
+# =============================================================================
+# 📦 ARCHIVOS DE INSTALACIÓN
+# =============================================================================
+
+# Instaladores
+*.exe
+*.msi
+*.dmg
+*.pkg
+
+# Archivos comprimidos
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# =============================================================================
+# 🧹 ARCHIVOS TEMPORALES
+# =============================================================================
+
+# Archivos temporales del sistema
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# Archivos de caché
+.cache/
+cache/
+
+# =============================================================================
+# 📚 DOCUMENTACIÓN TEMPORAL
+# =============================================================================
+
+# Archivos de documentación en proceso
+*.md~
+*.txt~
+*.docx~
+
+# =============================================================================
+# 🎯 ARCHIVOS ESPECÍFICOS DEL PROYECTO
+# =============================================================================
+
+# Scripts de prueba temporales
+test_*.py
+*_test.py
+*_temp.py
+
+# Archivos de configuración de cámara específicos
+camera_config_*.py
+*_local.py
+
+# Archivos de debug
+debug_*.py
+*_debug.py
+
+# =============================================================================
+# ✅ ARCHIVOS QUE SÍ SE INCLUYEN
+# =============================================================================
+
+# Forzar inclusión de archivos importantes
+!requirements.txt
+!requirements_stapi.txt
+!requirements_gentl.txt
+!README.md
+!README_Python.md
+!install_dependencies.py
+!*.py
+!Videos/.gitkeep
+
+# =============================================================================
+# 📝 NOTAS
+# =============================================================================
+#
+# Este .gitignore está diseñado para:
+# 1. Excluir entornos virtuales y archivos temporales
+# 2. Mantener el código fuente y documentación
+# 3. Evitar subir videos grandes al repositorio
+# 4. Proteger información sensible
+#
+# Si necesitas incluir algún archivo específico, usa:
+# !nombre_archivo
+#
+# =============================================================================
