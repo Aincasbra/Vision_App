@@ -1,5 +1,5 @@
 {
-  "timestamp": "2025-10-28 09:42:37",
+  "timestamp": "2025-10-28 12:31:25",
   "jetpack_version": "5.1.1",
   "system": {
     "hostname": "ubuntu",
@@ -33,21 +33,21 @@
       "cpu_model": "ARMv8 Processor rev 1 (v8l)"
     },
     "memory_total_gb": 7.16,
-    "memory_used_gb": 6.73,
-    "memory_free_gb": 0.15,
-    "memory_percent": 97.9,
+    "memory_used_gb": 6.06,
+    "memory_free_gb": 0.82,
+    "memory_percent": 88.5,
     "disk_total_gb": 915.89,
-    "disk_used_gb": 19.51,
-    "disk_free_gb": 858.57,
-    "disk_percent": 2.13,
-    "uptime_seconds": 2315.8898656368256,
+    "disk_used_gb": 19.58,
+    "disk_free_gb": 858.51,
+    "disk_percent": 2.14,
+    "uptime_seconds": 12443.5128262043,
     "load_average": [
-      1.21,
-      1.24,
-      1.18
+      1.18,
+      1.23,
+      1.26
     ],
     "cpu_count": 6,
-    "cpu_percent": 24.1
+    "cpu_percent": 20.9
   },
   "jetpack": {
     "error": "jetson_release no encontrado",
@@ -239,9 +239,9 @@
       "torch_optim": true
     },
     "performance_test": {
-      "cpu_time_seconds": 0.139,
+      "cpu_time_seconds": 0.155,
       "cuda_time_seconds": 0.051,
-      "speedup": 2.7
+      "speedup": 3.0
     }
   },
   "torchvision": {
@@ -481,12 +481,24 @@
   },
   "aravis": {
     "system": {
-      "available": false,
-      "error": "Namespace Aravis not available for version 0.8"
+      "available": true,
+      "version": "0.6.x",
+      "camera_count": 0,
+      "location": "/usr/lib/python3/dist-packages/gi/__init__.py",
+      "gi_version": "3.36.0"
     },
     "virtual_env": {
       "available": false,
       "error": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"/usr/lib/python3/dist-packages/gi/__init__.py\", line 132, in require_version\n    raise ValueError('Namespace %s not available for version %s' %\nValueError: Namespace Aravis not available for version 0.8"
+    },
+    "packages": [
+      "ii  aravis-tools                               0.6.0-3                              arm64        Aravis based tools for GenICam cameras",
+      "ii  gir1.2-aravis-0.6                          0.6.0-3                              arm64        GObject introspection data for Aravis",
+      "ii  libaravis-0.6-0                            0.6.0-3                              arm64        glib/gobject based library for video acquisition using GenICam cameras"
+    ],
+    "python_import": {
+      "success": true,
+      "version_checked": "0.6"
     }
   },
   "environment_variables": {
@@ -941,7 +953,7 @@
       "error": ""
     },
     "power_mode": {
-      "error": "Timeout"
+      "current": "NV Power Mode: 15W\n0"
     },
     "fan_mode": {
       "error": "Timeout"

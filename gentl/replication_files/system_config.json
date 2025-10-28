@@ -3,7 +3,7 @@
     "error": ""
   },
   "power_mode": {
-    "error": "Timeout"
+    "current": "NV Power Mode: 15W\n0"
   },
   "fan_mode": {
     "error": "Timeout"

@@ -1,226 +1,77 @@
-# 🎯 Sistema de Detección YOLO + Aravis para Jetson
+# 🎯 App YOLO + Aravis (PruebaAravis) – Guía de uso específica
 
 ## 📋 Descripción
 
-Sistema completo de detección de objetos en tiempo real usando YOLO v8 y cámaras GenICam (Aravis) optimizado para Jetson Orin. Incluye interfaz gráfica, control GPIO, grabación de video y análisis de rendimiento.
+Sistema de detección de objetos en tiempo real con YOLO y cámaras GenICam (Aravis), optimizado para Jetson Orin. Esta guía se centra en la UI, ajustes y flujos internos de `PruebaAravis.py`.
 
-## 🚀 Características
-
-- **Detección YOLO v8** con modelo personalizado
-- **Soporte Aravis** para cámaras GenICam (USB/GigE)
-- **Interfaz gráfica** con OpenCV
-- **Control GPIO** para hardware externo
-- **Grabación de video** con ffmpeg
-- **Análisis de rendimiento** en tiempo real
-- **Optimizado para CPU** en Jetson Orin (ARM64)
-
-## 🖥️ Requisitos del Sistema
-
-### Hardware
-- **Jetson Orin** (ARM64)
-- **Ubuntu 22.04 LTS**
-- **Cámara GenICam** (USB o GigE)
-- **Memoria:** Mínimo 8GB RAM
-- **Almacenamiento:** 20GB libres
-
-### Software
-- **Python 3.10+**
-- **PyTorch 2.0.1+** (CPU optimizado)
-- **OpenCV 4.12.0+**
-- **Aravis 0.8+**
-- **Ultralytics YOLO 8.3.207+**
-
-## 📦 Instalación
-
-### 1. Clonar el repositorio
+## 📦 Arranque rápido (recordatorio)
 ```bash
-git clone <repository-url>
-cd Calippo_jetson/gentl
+sudo systemctl stop vision-app.service
+export HEADLESS=0
+python3 PruebaAravis.py
 ```
 
-### 2. Instalación automática (Recomendado)
+## 🖥️ UI: Paneles y controles
+La ventana principal tiene imagen de cámara (izquierda) y panel lateral (derecha).
+
+- RUN/STOP: iniciar/detener captura y detección.
+- GRABAR 60s: guarda frames y ensambla vídeo (si hay ffmpeg).
+- Gamma: deslizador; aplica LUT en software y en HW si la cámara soporta Gamma.
+- Bayer (BG/RG/GR/GB): cambia demosaico y, en reposo, intenta ajustar PixelFormat en cámara.
+- YOLO Confidence: umbral de confianza (típico 0.25–0.60).
+- YOLO IOU: umbral NMS IOU (típico 0.40–0.50).
+- Clasificador:
+  - Confianza: umbral para marcar “Mala” en modo CONSERVADOR.
+  - Modo: CONSERVADOR/NORMAL.
+- INFO: ventana de sólo lectura con parámetros de cámara (PixelFormat, FPS, Exposure, Gain, Gamma, ROI...).
+- CONFIG: ventana editable con sliders para Exposición, Ganancia y FPS, y toggles AUTO.
+- AWB ONCE: auto-balance de blancos una vez; se desactiva al terminar.
+- AUTO CAL: activa AUTO (exposición/ganancia/balance) brevemente y fija los valores resultantes.
+
+Atajos en CONFIG:
+- T: TriggerMode On/Off si existe.
+- A/G: ExposureAuto/GainAuto.
+- ENTER/ESC: aceptar/cancelar.
+
+Indicadores en imagen:
+- Overlays YOLO (cajas, IDs estables) y HUD de latencia/FPS.
+- Indicador REC con cuenta atrás durante la grabación.
+
+## ⚙️ Ajustes recomendados
+- YOLO Confidence: sube para menos falsos positivos; baja para detectar más.
+- IOU NMS: alto para suprimir solapes; bajo para permitir más cajas.
+- Exposición/Ganancia: balancea blur/ruido (p.ej., ~5ms + 24dB en líneas rápidas).
+- Gamma: mejora contraste; aplica en HW si la cámara lo soporta.
+- Clasificador: modo CONSERVADOR exige alta confianza para “Mala”.
+
+## 🔄 Flujo interno (resumen)
+1) Captura (AravisBackend): configura ROI y obtiene el último frame (latest-frame) con demosaico Bayer→BGR.
+2) Preprocesado: LUT de gamma y/o ROI de inferencia.
+3) YOLO: detección (Ultralytics), NMS, fusión de solapes; parámetros ajustables (conf, iou, imgsz).
+4) Tracking: IDs estables por similitud/IoU; persistencia breve anti-parpadeo.
+5) Clasificación por lata: ROI circular, modelo PyTorch; guarda imagen si “Mala”.
+6) Logging: por lata (CSV/JSONL), eventos del sistema y snapshots/defects.
+7) Headless/Servicio: HEADLESS=1 con watchdog via systemd.
+
+## 🧪 Verificaciones rápidas
 ```bash
-chmod +x install_aravis_yolo.sh
-./install_aravis_yolo.sh
+# PyTorch
+python3 - <<'PY'
+import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())
+PY
+# Aravis 0.6
+python3 -c "import gi; gi.require_version('Aravis','0.6'); from gi.repository import Aravis; print('Aravis OK')"
+# Cámaras
+python3 -c "import gi; gi.require_version('Aravis','0.6'); from gi.repository import Aravis; Aravis.update_device_list(); print('Cámaras:', Aravis.get_n_devices())"
 ```
 
-### 3. Instalación manual
-```bash
-# Crear entorno virtual
-python3 -m venv .venv
-source .venv/bin/activate
+## 📁 Archivos relevantes
+- `PruebaAravis.py`: aplicación principal
+- `config_yolo.yaml`: configuración de modelo/umbrales
+- `requirements.jetson.txt`: dependencias pip (sin OpenCV)
+- `diagnostico_jetpack511.py`: diagnóstico del sistema
 
-# Instalar dependencias del sistema
-sudo apt update
-sudo apt install -y python3-pip libaravis-dev python3-gi python3-gi-cairo gir1.2-aravis-0.8
-
-# Instalar PyTorch para ARM64 (CPU optimizado)
-python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
-# Instalar dependencias de Python
-python3 -m pip install -r requirements_aravis_arm64.txt
-```
-
-## 🎮 Uso
-
-### Ejecutar el sistema
-```bash
-# Activar entorno virtual
-source .venv/bin/activate
-
-# Ejecutar sistema principal
-python3 prueba.py
-```
-
-### Controles de la interfaz
-- **RUN/STOP**: Iniciar/parar detección
-- **REC**: Iniciar/parar grabación
-- **Confianza**: Ajustar umbral de detección
-- **IOU**: Ajustar umbral de solapamiento
-- **Track Buffer**: Ajustar buffer de seguimiento
-
-### Configuración
-Editar `config_yolo.yaml` para personalizar:
-- Modelo YOLO
-- Clases de detección
-- Parámetros de confianza
-- Configuración de seguimiento
-
-## 📁 Estructura del Proyecto
-
-```
-gentl/
-├── prueba.py                    # Script principal
-├── vista_gentl_yolo.py         # Referencia de implementación
-├── config_yolo.yaml            # Configuración YOLO
-├── requirements.txt            # Dependencias con versiones específicas
-├── install_aravis_yolo.sh      # Instalación automática
-├── diagnostico_completo.py     # Diagnóstico completo del sistema
-├── verificar_replicacion.py    # Verificación de replicación
-├── README.md                   # Documentación principal
-├── INSTALACION_COMPLETA.md     # Guía detallada de instalación
-├── RESUMEN_VERSIONES.md        # Resumen de versiones
-├── REPLICACION_COMPLETA.md     # Guía de replicación
-├── v2_yolov8n_HERMASA_finetune.pt # Modelo YOLO entrenado
-└── diagnostico_resultados.json # Resultados del diagnóstico (JSON)
-```
-
-## 🔧 Configuración Avanzada
-
-### Modelo YOLO Personalizado
-1. Entrenar modelo con `ultralytics`
-2. Guardar como `.pt`
-3. Actualizar `config_yolo.yaml`
-4. Reiniciar sistema
-
-### Cámaras GenICam
-- **USB**: Conectar y ejecutar
-- **GigE**: Configurar IP estática
-- **Múltiples**: Cambiar `index` en `AravisBackend`
-
-### Optimización de Rendimiento
-- Ajustar resolución de cámara
-- Modificar tamaño de modelo YOLO
-- Optimizar para CPU (ARM64)
-- Ajustar parámetros de seguimiento
-
-## 🐛 Solución de Problemas
-
-### Error: "No cameras found (Aravis)"
-- **Causa**: No hay cámara conectada
-- **Solución**: Conectar cámara GenICam
-
-### Error: "ModuleNotFoundError: torch"
-- **Causa**: PyTorch no instalado
-- **Solución**: Ejecutar instalación automática
-
-### Error: "Numpy is not available"
-- **Causa**: Incompatibilidad de NumPy
-- **Solución**: Reinstalar NumPy compatible: `pip install numpy==1.24.3`
-
-### Rendimiento lento
-- Verificar que PyTorch esté optimizado
-- Reducir resolución de cámara
-- Usar modelo YOLO más pequeño
-
-## 📊 Diagnóstico del Sistema
-
-### Ejecutar diagnóstico completo
-```bash
-python3 diagnostico_completo.py
-```
-
-El diagnóstico genera dos archivos:
-- `diagnostico_resultados.json` - Datos completos en formato JSON
-- `RESUMEN_VERSIONES.md` - Resumen legible de versiones y estado
-
-### Verificar que el sistema esté listo para replicación
-```bash
-python3 verificar_replicacion.py
-```
-
-### Verificar componentes individuales
-```bash
-# Verificar PyTorch
-python3 -c "import torch; print('CUDA:', torch.cuda.is_available())"
-
-# Verificar Aravis
-python3 -c "import gi; gi.require_version('Aravis', '0.8'); from gi.repository import Aravis; print('Aravis:', Aravis.get_version())"
-
-# Verificar cámaras
-python3 -c "import gi; gi.require_version('Aravis', '0.8'); from gi.repository import Aravis; Aravis.update_device_list(); print('Cámaras:', Aravis.get_n_devices())"
-```
-
-## 📈 Rendimiento
-
-### Especificaciones de prueba
-- **Jetson Orin**: 7.44GB RAM
-- **Cámara**: USB3 GenICam 1920x1080@30fps
-- **Modelo**: YOLOv8n personalizado
-- **FPS**: 15-20 fps en detección (CPU)
-- **Latencia**: <100ms
-
-### Optimizaciones aplicadas
-- PyTorch optimizado para CPU
-- OpenCV optimizado
-- Pipeline asíncrono
-- Buffer de seguimiento eficiente
-- Memoria gestionada
-
-## 🤝 Contribución
-
-1. Fork del repositorio
-2. Crear rama de feature
-3. Commit de cambios
-4. Push a la rama
-5. Crear Pull Request
-
-## 📄 Licencia
-
-Este proyecto está bajo la licencia MIT. Ver `LICENSE` para más detalles.
-
-## 📞 Soporte
-
-Para soporte técnico o preguntas:
-- Crear issue en GitHub
-- Revisar `ESTADO_ACTUAL.md`
-- Ejecutar `diagnostico.py`
-
-## 🔄 Historial de Versiones
-
-### v2.1.0 (Actual)
-- Migración de GenTL a Aravis
-- Optimización para CPU en Jetson Orin
-- YOLO v8 actualizado
-- Interfaz mejorada
-- Diagnóstico completo del sistema
-- PyTorch optimizado para ARM64
-
-### v1.0.0 (Anterior)
-- Implementación inicial con GenTL
-- YOLO v5
-- Soporte básico Jetson
-
----
-
-**Desarrollado para Jetson Orin con Aravis y YOLO v8** 🚀
+## 🐛 Problemas frecuentes
+- Sin cámaras: verifica conexión y `Aravis.get_n_devices()`.
+- Pocos FPS: baja resolución/YOLO imgsz; ajusta exposición/ganancia.
+- Detecciones inestables: sube IOU o Confidence; usa modo CONSERVADOR en clasificador.

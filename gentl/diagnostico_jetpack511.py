@@ -881,33 +881,62 @@ def get_gpiod_info():
     return gpiod_info
 
 def get_aravis_info():
-    """Información de Aravis"""
+    """Información de Aravis 0.6"""
     aravis_info = {
         "system": {},
-        "virtual_env": {}
+        "virtual_env": {},
+        "packages": [],
+        "python_import": {}
     }
+    
+    # Paquetes instalados
+    try:
+        stdout, _, _ = run_command("dpkg -l | grep aravis")
+        aravis_info["packages"] = [line for line in stdout.split('\n') if line.strip()]
+    except:
+        aravis_info["packages"] = []
     
     # Verificar Aravis en el sistema
     try:
         import gi
-        gi.require_version('Aravis', '0.8')
+        gi.require_version('Aravis', '0.6')
         from gi.repository import Aravis
+        
+        try:
+            version = Aravis.get_version()
+            camera_count = Aravis.get_n_devices()
+        except:
+            version = "0.6.x"
+            camera_count = 0
         
         aravis_info["system"] = {
             "available": True,
-            "version": Aravis.get_version(),
-            "camera_count": Aravis.get_n_devices(),
+            "version": version,
+            "camera_count": camera_count,
             "location": gi.__file__,
             "gi_version": gi.__version__
+        }
+        
+        aravis_info["python_import"] = {
+            "success": True,
+            "version_checked": "0.6"
         }
     except ImportError as e:
         aravis_info["system"] = {
             "available": False,
             "error": str(e)
         }
+        aravis_info["python_import"] = {
+            "success": False,
+            "error": str(e)
+        }
     except Exception as e:
         aravis_info["system"] = {
             "available": False,
+            "error": str(e)
+        }
+        aravis_info["python_import"] = {
+            "success": False,
             "error": str(e)
         }
     
@@ -1575,18 +1604,26 @@ def generate_replication_files(report):
 
 if __name__ == "__main__":
     try:
+        import argparse
+        parser = argparse.ArgumentParser(description="Diagnóstico JetPack 5.1.1")
+        parser.add_argument("--replicate", action="store_true", help="Generar carpeta replication_files")
+        args = parser.parse_args()
+
         report = generate_report()
-        
-        # Generar archivos de replicación
-        replication_dir = generate_replication_files(report)
-        
-        print(f"\n🎉 Diagnóstico completado exitosamente")
-        print(f"📁 Archivo JSON: {REPORT_FILE}")
-        print(f"📁 Archivos de replicación: {replication_dir}")
-        print(f"🔄 Para actualizar, ejecuta: python3 {__file__}")
-        print(f"\n📋 Para replicar en otro Jetson:")
-        print(f"   1. Copiar carpeta: {replication_dir}")
-        print(f"   2. Ejecutar: ./replicate_system.sh")
+
+        if args.replicate:
+            replication_dir = generate_replication_files(report)
+            print(f"\n🎉 Diagnóstico completado exitosamente")
+            print(f"📁 Archivo JSON: {REPORT_FILE}")
+            print(f"📁 Archivos de replicación: {replication_dir}")
+            print(f"🔄 Para actualizar, ejecuta: python3 {__file__}")
+            print(f"\n📋 Para replicar en otro Jetson:")
+            print(f"   1. Copiar carpeta: {replication_dir}")
+            print(f"   2. Ejecutar: ./replicate_system.sh")
+        else:
+            print(f"\n🎉 Diagnóstico completado exitosamente")
+            print(f"📁 Archivo JSON: {REPORT_FILE}")
+            print(f"💡 Usa '--replicate' para generar carpeta de replicación")
     except Exception as e:
         print(f"❌ Error durante el diagnóstico: {e}")
         sys.exit(1)

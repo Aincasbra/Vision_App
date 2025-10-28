@@ -1,0 +1,17 @@
+# Requisitos para Jetson (JetPack 5.1.1, CUDA 11.4)
+# NOTA: torch/torchvision se instalan con wheels de NVIDIA (no PyPI)
+
+ultralytics==8.3.219
+onnxruntime==1.12.1
+numpy==1.23.5
+# No instalar opencv-python vía pip en Jetson; usar python3-opencv del sistema
+psutil==5.5.1
+pyyaml==6.0
+requests==2.32.4
+scipy==1.10.1
+typing-extensions==4.13.2
+
+# Instalar luego (fuera de pip) en Jetson:
+# torch==2.0.0+nv23.05 (wheel Jetson)
+# torchvision==0.15.x compatible (wheel local o fuente)
+
