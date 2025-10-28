@@ -49,6 +49,12 @@ fi
 info "OpenCV Python (bindings sistema)"
 apt install -y python3-opencv || true
 
+info "Instalando FFmpeg (requerido para ensamblar vídeos)"
+apt install -y ffmpeg || true
+
+info "Instalando Aravis 0.6..."
+apt install -y gir1.2-aravis-0.6 libaravis-0.6-0 aravis-tools || true
+
 info "Configurando variables de entorno CUDA en /etc/ld.so.conf.d/cuda.conf y ~/.bashrc"
 if [[ ! -f /etc/ld.so.conf.d/cuda.conf ]]; then
   echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf

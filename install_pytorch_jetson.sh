@@ -19,7 +19,10 @@ if [[ ! -x "$PY" ]]; then
   python3 -m venv "$VENV_DIR"
 fi
 source "$VENV_DIR/bin/activate"
-$PIP install --upgrade pip
+$PIP install --upgrade pip setuptools wheel
+
+# Asegurar NumPy compatible (evita errores de ABI en Jetson)
+$PIP install --upgrade "numpy>=1.23,<1.26"
 
 # Rutas de wheels locales (ajusta si las ruedas están en otro sitio)
 TORCH_WHL="/home/nvidia/tmp_jp/torch-2.0.0+nv23.05-cp38-cp38-linux_aarch64.whl"
@@ -44,8 +47,17 @@ fi
 
 # Verificación rápida
 python - <<'PY'
-import torch
-print('torch', torch.__version__, 'cuda', torch.cuda.is_available())
+import sys
+try:
+    import numpy as np
+    print('numpy', np.__version__)
+except Exception as e:
+    print('numpy ERROR', e)
+try:
+    import torch
+    print('torch', torch.__version__, 'cuda', torch.cuda.is_available())
+except Exception as e:
+    print('torch ERROR', e)
 PY
 
 ok "PyTorch/torchvision instalados (si no hubo errores arriba)"

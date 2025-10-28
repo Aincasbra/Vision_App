@@ -1,0 +1,50 @@
+# Dockerfile para Jetson (aarch64) con CUDA 11.4/cuDNN/TensorRT (JetPack 5.1.1)
+# NOTA: Requiere Docker con soporte NVIDIA en Jetson y runtime nvidia
+
+FROM nvcr.io/nvidia/l4t-base:r35.3.1
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv python3-dev \
+    build-essential cmake git wget curl unzip pkg-config \
+    libjpeg-dev libpng-dev libtiff-dev libavcodec-dev libavformat-dev libswscale-dev \
+    libgtk-3-dev libcanberra-gtk3-module \
+    gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+    libgpiod2 gpiod \
+    libopencv-dev python3-opencv \
+    libusb-1.0-0-dev libudev-dev \
+    gir1.2-aravis-0.6 libaravis-0.6-0 aravis-tools \
+    tensorrt tensorrt-dev libnvinfer8 libnvinfer-dev libnvinfer-plugin8 libnvinfer-plugin-dev \
+    libcudnn8 libcudnn8-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# CUDA env
+ENV CUDA_HOME=/usr/local/cuda \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    PATH=/usr/local/cuda/bin:${PATH} \
+    OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128 \
+    QT_QPA_PLATFORM=offscreen
+
+WORKDIR /app
+
+# Copiar proyecto (ajusta si quieres sólo gentl/)
+COPY . /app
+
+# Crear venv dentro del contenedor
+RUN python3 -m venv /app/gentl/.venv \
+ && . /app/gentl/.venv/bin/activate \
+ && pip install --upgrade pip wheel setuptools \
+ && pip install ultralytics==8.3.219 onnxruntime==1.12.1 psutil \
+ && true
+
+# Torch para Jetson: se recomienda montar un volumen con el wheel local
+# y luego instalar en runtime, o usar imagen base con torch preinstalado.
+# Como referencia (opcional, si montas /wheels):
+# RUN . /app/gentl/.venv/bin/activate && pip install /wheels/torch-2.0.0+nv23.05-cp38-cp38-linux_aarch64.whl && true
+
+# Entrypoint por defecto: headless
+ENV HEADLESS=1
+CMD ["/bin/bash", "-lc", ". /app/gentl/.venv/bin/activate && exec python /app/gentl/PruebaAravis.py"]
+
+

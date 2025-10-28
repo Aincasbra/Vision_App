@@ -2,6 +2,26 @@
 
 ## 📋 INSTRUCCIONES PASO A PASO
 
+### PASO 0: Preparar el sistema Jetson (CUDA/cuDNN/TensorRT, PyTorch y Aravis)
+
+1. Base del sistema (CUDA 11.4, cuDNN 8.6, TensorRT 8.5.2, deps, entorno):
+   ```bash
+   sudo /home/nvidia/Desktop/Calippo_jetson/base_setup_system.sh
+   ```
+
+2. PyTorch/TorchVision en la venv del proyecto (usa wheel local si lo tienes):
+   ```bash
+   /home/nvidia/Desktop/Calippo_jetson/install_pytorch_jetson.sh
+   # Si tienes el wheel local de torch:
+   # pip install /home/nvidia/tmp_jp/torch-2.0.0+nv23.05-cp38-cp38-linux_aarch64.whl
+   # Y para torchvision: pip install /home/nvidia/tvsrc  (o el wheel compatible)
+   ```
+
+3. Aravis 0.6 (paquetes del sistema):
+   ```bash
+   sudo apt install -y gir1.2-aravis-0.6 libaravis-0.6-0 aravis-tools
+   ```
+
 ### **PASO 1: PREPARACIÓN DEL EQUIPO DE FÁBRICA**
 
 1. **Conectar al equipo de fábrica (Jetson Orin NX/AGX)**
@@ -260,9 +280,9 @@ Si encuentras problemas:
    ```bash
    /home/nvidia/Desktop/Calippo_jetson/install_pytorch_jetson.sh
    ```
-3. Aravis 0.8:
+3. Aravis 0.6 (paquetes del sistema):
    ```bash
-   sudo /home/nvidia/Desktop/Calippo_jetson/install_aravis.sh
+   sudo apt install -y gir1.2-aravis-0.6 libaravis-0.6-0 aravis-tools
    ```
 4. Autoarranque + logs:
    ```bash
@@ -272,6 +292,33 @@ Si encuentras problemas:
    ```
 
 ### ¿Hace falta contraseña (sudo)?
+### Verificación final
+
+```bash
+# NVIDIA / CUDA
+nvcc --version
+ldconfig -p | grep libcudnn
+
+# PyTorch / NumPy / OpenCV
+cd /home/nvidia/Desktop/Calippo_jetson/gentl && source .venv/bin/activate
+python - <<'PY'
+import numpy as np, torch, cv2
+print('numpy', np.__version__)
+print('torch', torch.__version__, 'cuda', torch.cuda.is_available())
+print('opencv', cv2.__version__)
+PY
+
+# Aravis 0.6
+python -c "import gi; gi.require_version('Aravis','0.6'); from gi.repository import Aravis; print('Aravis 0.6 OK')"
+dpkg -l | grep aravis
+
+# Servicio
+systemctl status vision-app.service --no-pager || systemctl status calippo.service --no-pager
+
+# Logs
+ls -la /var/log/calippo/system
+tail -n 50 /var/log/calippo/system/calippo_jetson.log
+```
 - Sí, para scripts que modifican el sistema: `base_setup_system.sh`, `install_aravis.sh`, y algunas operaciones internas de `install_calippo_factory.sh`.
 - El resto se ejecutan como usuario normal.
 
