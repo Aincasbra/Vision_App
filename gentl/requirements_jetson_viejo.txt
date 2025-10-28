@@ -1,0 +1,13 @@
+# === Requisitos Python para igualar el Jetson anterior ===
+# NOTA: torch y torchvision se instalan desde el índice de NVIDIA JP 5.1.1 (v23.05) en el script setup.
+numpy==1.23.5
+onnxruntime==1.12.1
+opencv-python==4.12.0
+matplotlib==3.7.5
+scipy==1.10.1
+requests==2.32.4
+PyYAML==6.0
+pillow==10.4.0
+psutil==7.1.1
+ninja==1.11.1.1
+ultralytics==8.3.217

@@ -2,6 +2,11 @@
 # Dependencias compatibles con JetPack 5.1.1 (Ubuntu 20.04)
 # Python 3.8, CUDA 11.4, PyTorch 1.13.x, Aravis 0.6
 
+
+#Instalar en el sistema no en el entorno virtual ./venv: 
+sudo apt update
+sudo apt install -y libopenblas-base libopenblas-dev libomp5
+
 # Core dependencies - Compatibles con JetPack 5.1.1
 numpy==1.24.4
 torch==1.13.1

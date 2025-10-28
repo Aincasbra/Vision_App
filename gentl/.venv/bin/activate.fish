@@ -29,7 +29,7 @@ end
 # unset irrelevant variables
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /home/nvidia/Desktop/Calippo_jetson-aravis-yolo/gentl/.venv
+set -gx VIRTUAL_ENV /home/nvidia/Desktop/Calippo_jetson/gentl/.venv
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH

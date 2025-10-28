@@ -25,6 +25,56 @@ import subprocess # Para ejecutar comandos del sistema
 import shutil # Para operaciones de alto nivel en archivos y directorios 
 from time import perf_counter
 import sys
+import socket  # para notificar a systemd (watchdog)
+
+# === Integración del sistema de logging de producción ===
+from logging_system import (
+    initialize_production_logging,
+    log_system_event,
+    log_digital,
+    save_snapshot,
+    save_defect,
+    log_vision_event,
+    update_performance_metrics,
+    log_performance,
+    get_production_logger,
+)
+
+# ===== MODO HEADLESS (sin UI/Display) =====
+HEADLESS = os.environ.get("HEADLESS", "0") == "1"
+if HEADLESS:
+    # Forzar plataforma offscreen para Qt/HighGUI
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    # Anular funciones de UI de OpenCV para evitar errores sin X/Display
+    try:
+        _orig_imshow = cv2.imshow
+        _orig_namedWindow = cv2.namedWindow
+        _orig_resizeWindow = cv2.resizeWindow
+        _orig_destroyAllWindows = cv2.destroyAllWindows
+        _orig_waitKey = cv2.waitKey
+    except Exception:
+        _orig_imshow = _orig_namedWindow = _orig_resizeWindow = _orig_destroyAllWindows = _orig_waitKey = None
+    cv2.imshow = lambda *a, **k: None
+    cv2.namedWindow = lambda *a, **k: None
+    cv2.resizeWindow = lambda *a, **k: None
+    cv2.destroyAllWindows = lambda : None
+    cv2.waitKey = lambda ms=1: -1
+
+# ===== Helper: notificación a systemd (READY/ WATCHDOG/ STOPPING) =====
+def _sd_notify(msg: str) -> None:
+    try:
+        addr = os.environ.get('NOTIFY_SOCKET')
+        if not addr:
+            return
+        # Sockets abstractos empiezan por '@' y se convierten a '\0'
+        if addr.startswith('@'):
+            addr = '\0' + addr[1:]
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        s.connect(addr)
+        s.send(msg.encode('utf-8'))
+        s.close()
+    except Exception:
+        pass
 
 # --- Utilidad: fusionar detecciones muy solapadas para evitar duplicados ---
 def merge_overlapping_detections(xyxy, confs, clss, iou_threshold=0.7):
@@ -554,6 +604,49 @@ def finalize_track_class(tid, image_width=None):
 
     results_summary[tid] = verdict
     print(f"[INFO] Lata ID={tid} → {verdict} (conf={conf:.2f})")
+
+    # ===== Logging de visión por lata =====
+    try:
+        cam_params = {
+            'ExposureTime': safe_get(cam, 'ExposureTime', None) if 'cam' in globals() else None,
+            'Gain': safe_get(cam, 'Gain', None) if 'cam' in globals() else None,
+            'Gamma': safe_get(cam, 'Gamma', None) if 'cam' in globals() else None,
+            'PixelFormat': safe_get(cam, 'PixelFormat', None) if 'cam' in globals() else None,
+            'Width': safe_get(cam, 'Width', None) if 'cam' in globals() else None,
+            'Height': safe_get(cam, 'Height', None) if 'cam' in globals() else None,
+        }
+        yolo_params = {
+            'threshold': float(YOLO_CONF),
+            'class': clase,
+            'confidence': float(conf)
+        }
+        # Guardar imagen de defecto si la lata es mala
+        if isinstance(clase, str) and clase.lower().startswith('mala'):
+            try:
+                import builtins
+                frame_bgr = getattr(builtins, 'latest_frame', None)
+                if frame_bgr is not None and st.get('last_box') is not None:
+                    x1, y1, x2, y2 = map(int, st['last_box'])
+                    x1 = max(0, min(frame_bgr.shape[1]-1, x1)); x2 = max(0, min(frame_bgr.shape[1]-1, x2))
+                    y1 = max(0, min(frame_bgr.shape[0]-1, y1)); y2 = max(0, min(frame_bgr.shape[0]-1, y2))
+                    if x2 > x1 and y2 > y1:
+                        defect_crop = frame_bgr[y1:y2, x1:x2].copy()
+                        save_defect(defect_crop, str(tid), clase, float(conf), level='warning')
+            except Exception:
+                pass
+        # Log por lata (CSV/JSONL + syslog)
+        log_vision_event(
+            can_id=str(tid),
+            verdict='bad' if (isinstance(clase, str) and clase.lower().startswith('mala')) else 'ok',
+            camera_params=cam_params,
+            yolo_params=yolo_params,
+            bbox=[int(v) for v in st.get('last_box')] if st.get('last_box') is not None else None,
+            image=None,
+            level='info'
+        )
+    except Exception:
+        pass
+
     return clase, conf, prob
 
 # ===== CONTROLES CÁMARA: GET/SET EXPOSURE y GAIN =====
@@ -590,6 +683,36 @@ def set_camera_param(device, name, value):
         print(f"[CAM] {name} set to {value}")
     except Exception as e:
         print(f"[ERROR] Cannot set {name}: {e}")
+
+def dump_cam(device):
+    """Dump de parámetros de la cámara para debugging"""
+    def g(name):
+        try:
+            val = device.get_feature_value(name)
+            if isinstance(val, float):
+                return f"{val:.3f}" if abs(val) < 1e6 else f"{val:.0f}"
+            elif isinstance(val, int):
+                return f"{val}"
+            elif isinstance(val, str):
+                return f'"{val}"'
+            else:
+                return str(val)
+        except Exception as e:
+            return f"ERR: {e}"
+    
+    print("\n" + "="*60)
+    print("📷 PARÁMETROS DE CÁMARA")
+    print("="*60)
+    print(f"PixelFormat: {g('PixelFormat')}")
+    print(f"ExposureAuto: {g('ExposureAuto')}")
+    print(f"ExposureTime (us): {g('ExposureTime')}")
+    print(f"GainAuto: {g('GainAuto')}")
+    print(f"Gain (dB): {g('Gain')}")
+    print(f"AcquisitionFrameRate (fps): {g('AcquisitionFrameRate')}")
+    print(f"TriggerMode: {g('TriggerMode')}")
+    print(f"Width: {g('Width')} x Height: {g('Height')}")
+    print(f"OffsetX: {g('OffsetX')}, OffsetY: {g('OffsetY')}")
+    print("="*60 + "\n")
 
 # ===== OPTIMIZACIONES DE RENDIMIENTO =====
 def optimize_for_high_speed():
@@ -749,7 +872,7 @@ from gi.repository import Aravis, GLib
 class AravisBackend:
     """Wrapper mínimo para usar Aravis como fuente de frames BGR."""
     
-    def __init__(self, index=0, n_buffers=8, bayer_code=cv2.COLOR_BayerBG2BGR):
+    def __init__(self, index=0, n_buffers=6, bayer_code=cv2.COLOR_BayerBG2BGR):
         self.index = index
         self.n_buffers = n_buffers
         self.bayer_code = bayer_code
@@ -769,12 +892,14 @@ class AravisBackend:
     # --- util pop portable (algunos builds aceptan timeout_us, otros no)
     def _try_pop(self, poll_us=20000):
         try:
-            return self.stream.try_pop_buffer(poll_us)  # con timeout
+            # Intentar sin argumentos primero (no bloquea)
+            return self.stream.try_pop_buffer()
         except TypeError:
-            buf = self.stream.try_pop_buffer()  # sin timeout
-            if buf is None:
-                GLib.usleep(poll_us)
-            return buf
+            # Fallback: con parámetro de timeout
+            try:
+                return self.stream.try_pop_buffer(poll_us)
+            except:
+                return None
 
     # --- "nodos" de cámara (get/set) compatibles con tus helpers safe_get/safe_set
     def get_node_value(self, name, default=None):
@@ -922,9 +1047,18 @@ class AravisBackend:
                 self.bayer_code = cv2.COLOR_BayerRG2BGR
             except Exception:
                 pass
-        # Ajustes GigE recomendados
+        # Ajustes GigE recomendados para reducir latencia
         try:
-            self.dev.set_integer_feature_value("GevSCPSPacketSize", 1500)
+            # Intentar usar jumbo frames primero (9000), fallback a 8192
+            try:
+                self.dev.set_integer_feature_value("GevSCPSPacketSize", 9000)
+                print("[GigE] GevSCPSPacketSize = 9000 (jumbo frames)")
+            except Exception:
+                try:
+                    self.dev.set_integer_feature_value("GevSCPSPacketSize", 8192)
+                    print("[GigE] GevSCPSPacketSize = 8192")
+                except Exception:
+                    print("[GigE] No se pudo configurar GevSCPSPacketSize")
         except Exception:
             pass
 
@@ -949,8 +1083,10 @@ class AravisBackend:
                     self.dev.set_integer_feature_value("AcquisitionFrameRate", 54)
                 except Exception:
                     pass
+            # Ajustar GevSCPD: 2000 ns si hay pérdida, 0 si no hay pérdida
             try:
-                self.dev.set_integer_feature_value("GevSCPD", 4000)
+                self.dev.set_integer_feature_value("GevSCPD", 2000)
+                print("[GigE] GevSCPD = 2000 ns")
             except Exception:
                 pass
         except Exception:
@@ -1143,17 +1279,57 @@ class AravisBackend:
         if not self.started:
             return None
 
-        waited = 0
-        poll_us = 20000
-        buf = None
-        while waited < timeout_ms*1000:
-            buf = self._try_pop(poll_us=poll_us)
-            if buf is not None:
+        # DRENAR COLA: sacar todos los buffers viejos y quedarse solo con el último
+        latest = None
+        drained_count = 0
+        
+        # Intentar drenar la cola sin timeout
+        while drained_count < 10:  # límite de seguridad
+            try:
+                buf = self.stream.try_pop_buffer()  # sin argumentos, no bloquea
+                if buf is None:
+                    break
+                if latest is not None:
+                    # devuelve el anterior al pool
+                    try:
+                        self.stream.push_buffer(latest)
+                    except Exception:
+                        pass
+                latest = buf
+                drained_count += 1
+            except Exception:
                 break
-            waited += poll_us
-
-        if buf is None:
+        
+        # Si no había nada en la cola, esperar un poquito para obtener un frame
+        if latest is None:
+            waited = 0
+            poll_us = 20000
+            max_wait = timeout_ms * 1000
+            while waited < max_wait:
+                try:
+                    latest = self.stream.try_pop_buffer(poll_us)
+                    if latest is not None:
+                        break
+                except Exception:
+                    pass
+                waited += poll_us
+        
+        if latest is None:
             return None
+        
+        buf = latest
+
+        # Capturar timestamp de la cámara para medición de latencia
+        ts_cam_ns = None
+        try:
+            ts_cam_ns = buf.get_timestamp()
+            # El timestamp de Aravis está en nanoseconds desde inicio del sistema
+            # Guardar el primer timestamp para calcular diferencias relativas
+            if not hasattr(self, '_first_cam_timestamp'):
+                self._first_cam_timestamp = ts_cam_ns
+                self._first_sys_timestamp = time.time_ns()
+        except Exception:
+            pass
 
         data = buf.get_data()
         # Descartar buffers con estado no exitoso (incompletos)
@@ -1225,7 +1401,28 @@ class AravisBackend:
         except Exception:
             pass
 
-        return bgr, time.time()
+        # Calcular latencia end-to-end usando diferencias relativas
+        ts_now_ns = time.time_ns()
+        if ts_cam_ns is not None and hasattr(self, '_first_cam_timestamp'):
+            # Calcular diferencia de tiempo de cámara desde el primer frame
+            cam_diff_ns = ts_cam_ns - self._first_cam_timestamp
+            # Calcular diferencia de tiempo del sistema desde el primer frame
+            sys_diff_ns = ts_now_ns - self._first_sys_timestamp
+            # La latencia es la diferencia entre lo que pasó en el sistema vs en la cámara
+            # Esto nos da el tiempo que el frame tardó en llegar desde la cámara
+            lat_ms = (sys_diff_ns - cam_diff_ns) / 1e6
+            
+            # Solo imprimir cada 30 frames para no saturar logs
+            if hasattr(self, '_frame_count'):
+                self._frame_count += 1
+            else:
+                self._frame_count = 1
+            if self._frame_count % 30 == 0:
+                print(f"[LAT] End2end={lat_ms:.1f}ms (cámara→CPU)")
+        else:
+            lat_ms = None
+
+        return bgr, time.time(), lat_ms
 
 
 class Prof:
@@ -1286,6 +1483,10 @@ def do0_init():
 def do0_set(v: int):
     with open(f"/sys/class/gpio/gpio{GPIO_DO0}/value","w") as f:
         f.write("1" if v else "0")  # 1 = hunde a GND (ON), 0 = abierto (OFF)
+    try:
+        log_digital(channel=0, value=int(bool(v)), message="DO0 set", level="info")
+    except Exception:
+        pass
 
 def do0_pulse(ms: int=50, repeat: int=1, gap_ms: int=50):
     for _ in range(repeat):
@@ -1293,6 +1494,10 @@ def do0_pulse(ms: int=50, repeat: int=1, gap_ms: int=50):
         time.sleep(ms/1000.0)
         do0_set(0)
         time.sleep(gap_ms/1000.0)
+    try:
+        log_digital(channel=0, value=1, message=f"Pulso DO0 {ms}ms x{repeat}", level="info")
+    except Exception:
+        pass
 
 def _console_listener():
     """
@@ -1873,7 +2078,7 @@ CLASSIFY_MAX_PER_FRAME = 2  # tope de latas a clasificar por frame para no satur
 # --- Overlay / Panel ---
 DRAW_TRAILS = True
 HISTORY_LEN = 30
-MAX_QUEUE = 3  # cola ultra pequeña para mínima latencia
+MAX_QUEUE = 2  # cola ultra pequeña para mínima latencia - descarte automático de frames viejos
 DOWNSCALE = 1.0  # fijo para UI; reescala solo en hilo YOLO si se desea
 SKIP_FRAMES = 1  # procesar todos los frames para mejor tracking
 YOLO_TARGET_FPS = 10.0  # FPS objetivo para YOLO (sincronizar con cámara)
@@ -2785,6 +2990,17 @@ def show_config_window(cam):
             return
         _last_cb_t["expo"] = now
         v = np.clip(v, et_lo, et_hi)
+        # Asegurar que ExposureAuto esté desactivado antes de cambiar ExposureTime
+        try:
+            safe_set(cam, "ExposureAuto", "Off")
+        except:
+            pass
+        # Opcional: configurar ExposureMode si existe
+        try:
+            safe_set(cam, "ExposureMode", "Timed")
+        except:
+            pass
+        # Establecer el tiempo de exposición en microsegundos
         s("ExposureTime", float(v))
         print(f"ExposureTime -> {v:.1f} us")
 
@@ -3086,9 +3302,10 @@ def yolo_inference_thread():
             if ROI_Y1 is not None and ROI_Y2 is not None and ROI_X1 is not None and ROI_X2 is not None:
                 off_y = int(ROI_Y1); off_x = int(ROI_X1)
                 roi = bgr[int(ROI_Y1):int(ROI_Y2), int(ROI_X1):int(ROI_X2)]
-            print(f"[YOLO] Procesando frame {frame_count}, ROI shape: {roi.shape}")
-            print(f"[YOLO] Usando confianza: {YOLO_CONF}")
-            print(f"[YOLO] PROCESS_EVERY: {PROCESS_EVERY}, frame_count % PROCESS_EVERY = {frame_count % PROCESS_EVERY}")
+            if frame_count % 30 == 0:
+                print(f"[YOLO] Procesando frame {frame_count}, ROI shape: {roi.shape}")
+                print(f"[YOLO] Usando confianza: {YOLO_CONF}")
+                print(f"[YOLO] PROCESS_EVERY: {PROCESS_EVERY}, frame_count % PROCESS_EVERY = {frame_count % PROCESS_EVERY}")
             
             # === TIMING DETALLADO DE YOLO ===
             yolo_start_time = time.time()
@@ -3107,22 +3324,24 @@ def yolo_inference_thread():
                 detections = model.predict(roi, YOLO_CONF, yolo_args=YOLO_ARGS)
                 predict_time = (time.time() - predict_start) * 1000
                 
-                print(f"[YOLO] Raw detections: {len(detections)}")
-                print(f"[YOLO] ⏱️ Tiempo predicción: {predict_time:.2f}ms")
-                
-                if len(detections) > 0:
-                    print(f"[YOLO] ✅ DETECCIÓN ENCONTRADA!")
-                    print(f"[YOLO] Primera detección: {detections[0]}")
-                    # Debug adicional para ver todas las detecciones
-                    for i, det in enumerate(detections):
-                        print(f"[YOLO] Detección {i}: conf={det.get('confidence', 'N/A')}, class={det.get('class_id', 'N/A')}")
-                else:
-                    print(f"[YOLO] ❌ Sin detecciones en este frame")
+                if frame_count % 30 == 0:
+                    print(f"[YOLO] Raw detections: {len(detections)}")
+                    print(f"[YOLO] ⏱️ Tiempo predicción: {predict_time:.2f}ms")
+                    
+                    if len(detections) > 0:
+                        print(f"[YOLO] ✅ DETECCIÓN ENCONTRADA!")
+                        print(f"[YOLO] Primera detección: {detections[0]}")
+                        # Debug adicional para ver todas las detecciones
+                        for i, det in enumerate(detections):
+                            print(f"[YOLO] Detección {i}: conf={det.get('confidence', 'N/A')}, class={det.get('class_id', 'N/A')}")
+                    else:
+                        print(f"[YOLO] ❌ Sin detecciones en este frame")
             except Exception as e:
                 print(f"❌ YOLO predict lanzó excepción: {e}")
                 detections = []
             
-            print(f"[YOLO] dets={len(detections)} conf>={YOLO_CONF}")
+            if frame_count % 30 == 0:
+                print(f"[YOLO] dets={len(detections)} conf>={YOLO_CONF}")
             yolo_profiler.mark("model_predict_done")
             
             # === TIMING DE POSTPROCESAMIENTO ===
@@ -3182,7 +3401,8 @@ def yolo_inference_thread():
             
             # === TIMING DE POSTPROCESAMIENTO ===
             postprocess_time = (time.time() - postprocess_start) * 1000
-            print(f"[POSTPROCESS] ⏱️ Tiempo postprocesamiento: {postprocess_time:.2f}ms")
+            if frame_count % 30 == 0:
+                print(f"[POSTPROCESS] ⏱️ Tiempo postprocesamiento: {postprocess_time:.2f}ms")
             
             # === DETECCIÓN BÁSICA ===
             # Asignar IDs simples
@@ -3299,7 +3519,8 @@ def yolo_inference_thread():
         tids = local_ids.copy()
         
         tracking_time = (time.time() - tracking_start) * 1000
-        print(f"[TRACKING] ⏱️ Tiempo tracking: {tracking_time:.2f}ms")
+        if frame_count % 30 == 0:
+            print(f"[TRACKING] ⏱️ Tiempo tracking: {tracking_time:.2f}ms")
         # Publicar fid en builtins para priorización en UI
         try:
             import builtins
@@ -3352,7 +3573,8 @@ def yolo_inference_thread():
         if PROFILE_YOLO: 
             yolo_profiler.mark("pack_done")
             yolo_rep = yolo_profiler.get_report()
-            print(f"[PROFILER] ⏱️ Reporte YOLO: {yolo_rep}")
+            if frame_count % 30 == 0:
+                print(f"[PROFILER] ⏱️ Reporte YOLO: {yolo_rep}")
         else: 
             yolo_rep = {}
         
@@ -3360,7 +3582,8 @@ def yolo_inference_thread():
         
         # === TIMING TOTAL DEL FRAME ===
         total_yolo_time = (time.time() - yolo_start_time) * 1000
-        print(f"[YOLO_TOTAL] ⏱️ Tiempo total frame: {total_yolo_time:.2f}ms")
+        if frame_count % 30 == 0:
+            print(f"[YOLO_TOTAL] ⏱️ Tiempo total frame: {total_yolo_time:.2f}ms")
         
         # Exponer cajas/IDs para dibujo directo en UI (plan B)
         try:
@@ -3674,6 +3897,14 @@ def main():
     # --- Chequeo de dependencias .so del CTI ---
     import subprocess
     
+    # ===== INICIALIZAR LOGGING DE PRODUCCIÓN =====
+    try:
+        initialize_production_logging(app_name="calippo_jetson", log_dir="/var/log/calippo", enable_console=False)
+        log_system_event("startup", "PruebaAravis iniciado")
+        _sd_notify("READY=1")
+    except Exception:
+        pass
+
     # Inicializar dispositivo unificado
     initialize_unified_device()
     
@@ -3705,16 +3936,15 @@ def main():
     target_ip = "172.20.2.151"
     selected = None
     
-    # === Selección de cámara por serial o MAC (no por IP) ===
-    serial_objetivo = "25G5136"  # visto en tu print(info)
-    mac_objetivo = "d4:7c:44:31:89:03"  # visto en tu print(info)
-    
     # Sustituir por:
     #backend.start()
     acquisition_running = False  # como estado inicial (tu UI arranca en STOP)
     cam = cam_like  # para que show_config_window/show_info_window usen backend
     privilege = "Control"  # ficticio para mantener el mismo flujo de logs
     print(f"🔑 Cámara abierta con privilegio: {privilege}")
+    
+    # Dump inicial de parámetros de cámara
+    dump_cam(cam)
     
     # ...cuando vayas a setear parámetros:
     if privilege == "ReadOnly":
@@ -3743,6 +3973,10 @@ def main():
         safe_set(cam, 'PixelFormat', PIXEL_FORMAT)
         safe_set(cam, 'TriggerMode', 'Off')
         safe_set(cam, 'AcquisitionFrameRate', 15.0)  # Aumentado para mejor rendimiento
+        # Asegurar que ExposureAuto esté desactivado antes de cambiar ExposureTime
+        safe_set(cam, 'ExposureAuto', 'Off')
+        # Opcional: configurar ExposureMode si existe
+        safe_set(cam, 'ExposureMode', 'Timed')
         safe_set(cam, 'ExposureTime', 4000.0)
         safe_set(cam, 'Gain', 28.0)
         safe_set(cam, 'BalanceWhiteAuto', 'Off')
@@ -3750,36 +3984,38 @@ def main():
     # Configurar código Bayer
     cv_code_bayer = cv2.COLOR_BayerBG2BGR
     
-    # CREAR VENTANA PRINCIPAL
-    window_width = 1280 + 350  # Inicial (se ajustará con el primer frame)
-    window_height = 900  # Altura mínima para el panel con clasificador + tracks activos
-    cv2.namedWindow(WIN_MAIN, cv2.WINDOW_AUTOSIZE)
-    cv2.resizeWindow(WIN_MAIN, window_width, window_height)
-    cv2.setMouseCallback(WIN_MAIN, handle_mouse_click)
+    # CREAR VENTANA PRINCIPAL (saltar en headless)
+    if not HEADLESS:
+        window_width = 1280 + 350
+        window_height = 900
+        cv2.namedWindow(WIN_MAIN, cv2.WINDOW_AUTOSIZE)
+        cv2.resizeWindow(WIN_MAIN, window_width, window_height)
+        cv2.setMouseCallback(WIN_MAIN, handle_mouse_click)
     
     # CREAR PANEL DE CONTROL
     panel_control = crear_panel_control_stviewer(1280, 720)
     
-    # MOSTRAR INTERFAZ INICIAL
-    # Crear imagen negra para el área de la cámara (misma altura que el panel)
-    panel_height = panel_control.shape[0]  # Usar la altura real del panel
+    # MOSTRAR INTERFAZ INICIAL (no mostrar en headless)
+    panel_height = panel_control.shape[0]
     camera_area = np.full((panel_height, 1280, 3), (32, 32, 32), dtype=np.uint8)
-    # Muy importante: que el offset del panel obedezca a lo que realmente dibujas
     current_img_w, current_img_h = 1280, panel_height
     panel_offset_x = current_img_w
     globals()['panel_offset_x'] = int(current_img_w)
-    
-    # Título en el área de la cámara
-    cv2.putText(camera_area, "YOLO + GenTL", (400, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3)
-    cv2.putText(camera_area, "Detección + Tracking en Tiempo Real", (350, 250), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200, 200, 200), 2)
-    cv2.putText(camera_area, "Haz clic en RUN para iniciar", (400, 400), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
-    
-    # Combinar área de cámara + panel de control
-    interface_completa = np.hstack([camera_area, panel_control])
-    cv2.imshow(WIN_MAIN, interface_completa)
-    cv2.resizeWindow(WIN_MAIN, interface_completa.shape[1], interface_completa.shape[0])
+    if not HEADLESS:
+        cv2.putText(camera_area, "YOLO + GenTL", (400, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3)
+        cv2.putText(camera_area, "Detección + Tracking en Tiempo Real", (350, 250), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200, 200, 200), 2)
+        cv2.putText(camera_area, "Haz clic en RUN para iniciar", (400, 400), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+        interface_completa = np.hstack([camera_area, panel_control])
+        cv2.imshow(WIN_MAIN, interface_completa)
+        cv2.resizeWindow(WIN_MAIN, interface_completa.shape[1], interface_completa.shape[0])
     
     print("🧪 INTERFAZ PROFESIONAL INICIADA")
+    # En modo headless, iniciar automáticamente la adquisición (equivalente a pulsar RUN)
+    if HEADLESS:
+        try:
+            evt_queue.put("RUN")
+        except Exception:
+            pass
     
     # === VERIFICACIÓN CUDA/TORCH EN CADA EJECUCIÓN ===
     print("\n🔍 VERIFICACIÓN DE HARDWARE:")
@@ -3861,6 +4097,7 @@ def main():
     t0 = None
     f = 0
     yolo_stats = {'fps': 0, 'tracks': 0, 'detections': 0}
+    last_snapshot_time = 0.0
     
     # Estado de grabación
     recording_active = False
@@ -3871,6 +4108,10 @@ def main():
     recording_out_path = None
     last_rec_log_second = -1
     
+    # --- Watchdog de systemd (latido cada ~10s si está habilitado) ---
+    last_watchdog = time.time()
+    watchdog_interval = 10.0
+
     # --- DO0: salida digital para desvío ---
     try:
         do0_init()
@@ -4048,19 +4289,153 @@ def main():
                 button_clicked = None
                 
             elif button_clicked == "AUTO_CAL" and acquisition_running:
-                print("🎨 Auto Calibración (Expo/Gain) ...")
+                print("\n" + "="*60)
+                print("🎨 AUTO CAL - INICIANDO...")
+                print("="*60)
+                import sys
+                sys.stdout.flush()
                 def _auto_cal():
                     try:
+                        import sys
+                        # Obtener TODOS los valores ANTES del autocal
+                        print(f"\n📊 Valores ANTES del autocal:")
+                        sys.stdout.flush()
+                        all_params_before = {}
+                        for param in ['ExposureTime', 'ExposureAuto', 'Gain', 'GainAuto', 
+                                     'AcquisitionFrameRate', 'TriggerMode', 'TriggerSource',
+                                     'BalanceWhiteAuto', 'WhiteBalanceAuto', 'PixelFormat',
+                                     'Width', 'Height', 'OffsetX', 'OffsetY',
+                                     'ExposureAutoLimitMin', 'ExposureAutoLimitMax',
+                                     'GainAutoLimitMin', 'GainAutoLimitMax',
+                                     'BlackLevel', 'Gamma', 'GammaEnable']:
+                            try:
+                                val = safe_get(cam, param, None)
+                                all_params_before[param] = val
+                                print(f"   {param}: {val}")
+                            except:
+                                pass
+                        
+                        # Activar auto
                         safe_set(cam, 'ExposureAuto', 'Continuous')
                         safe_set(cam, 'GainAuto', 'Continuous')
+                        # También activar BalanceWhiteAuto si está disponible
+                        safe_set(cam, 'BalanceWhiteAuto', 'Continuous')
+                        safe_set(cam, 'WhiteBalanceAuto', 'Continuous')
+                        
+                        print(f"\n⏳ Calibrando... (0.5s)")
+                        sys.stdout.flush()
+                        print(f"   Auto-activos: ExposureAuto, GainAuto, BalanceWhiteAuto")
+                        sys.stdout.flush()
                         time.sleep(0.5)
+                        
+                        # Desactivar auto
                         safe_set(cam, 'ExposureAuto', 'Off')
                         safe_set(cam, 'GainAuto', 'Off')
-                        et_final = safe_get(cam, 'ExposureTime', 'N/A')
-                        gn_final = safe_get(cam, 'Gain', 'N/A')
-                        print(f"✅ Auto calibración completada | ExposureTime: {et_final} us | Gain: {gn_final} dB")
+                        safe_set(cam, 'BalanceWhiteAuto', 'Off')
+                        safe_set(cam, 'WhiteBalanceAuto', 'Off')
+                        
+                        # Leer TODOS los valores FINALES
+                        print(f"\n✅ AUTO CALIBRACIÓN COMPLETADA:")
+                        all_params_after = {}
+                        for param in ['ExposureTime', 'ExposureAuto', 'Gain', 'GainAuto', 
+                                    'AcquisitionFrameRate', 'TriggerMode', 'TriggerSource',
+                                    'BalanceWhiteAuto', 'WhiteBalanceAuto', 'PixelFormat',
+                                    'Width', 'Height', 'OffsetX', 'OffsetY',
+                                    'ExposureAutoLimitMin', 'ExposureAutoLimitMax',
+                                    'GainAutoLimitMin', 'GainAutoLimitMax',
+                                    'BlackLevel', 'Gamma', 'GammaEnable']:
+                            try:
+                                val_after = safe_get(cam, param, None)
+                                all_params_after[param] = val_after
+                                val_before = all_params_before.get(param, None)
+                                
+                                if val_after != val_before:
+                                    print(f"   {param}: {val_after} ← (cambió de {val_before})")
+                                else:
+                                    print(f"   {param}: {val_after}")
+                            except:
+                                pass
+                        
+                        # Parámetros que pueden haber cambiado (lista completa)
+                        print(f"\n📋 RESUMEN DE CAMBIOS:")
+                        print(f"   === EXPOSICIÓN ===")
+                        print(f"   ExposureTime: {all_params_after.get('ExposureTime', 'N/A')} μs")
+                        print(f"   ExposureAuto: {all_params_after.get('ExposureAuto', 'N/A')}")
+                        if 'ExposureAutoLimitMin' in all_params_after:
+                            print(f"   ExposureAutoLimitMin: {all_params_after.get('ExposureAutoLimitMin', 'N/A')}")
+                        if 'ExposureAutoLimitMax' in all_params_after:
+                            print(f"   ExposureAutoLimitMax: {all_params_after.get('ExposureAutoLimitMax', 'N/A')}")
+                        
+                        print(f"\n   === GANANCIA ===")
+                        print(f"   Gain: {all_params_after.get('Gain', 'N/A')} dB")
+                        print(f"   GainAuto: {all_params_after.get('GainAuto', 'N/A')}")
+                        if 'GainAutoLimitMin' in all_params_after:
+                            print(f"   GainAutoLimitMin: {all_params_after.get('GainAutoLimitMin', 'N/A')}")
+                        if 'GainAutoLimitMax' in all_params_after:
+                            print(f"   GainAutoLimitMax: {all_params_after.get('GainAutoLimitMax', 'N/A')}")
+                        
+                        print(f"\n   === BALANCE DE BLANCOS ===")
+                        if 'BalanceWhiteAuto' in all_params_after:
+                            print(f"   BalanceWhiteAuto: {all_params_after.get('BalanceWhiteAuto', 'N/A')}")
+                        if 'WhiteBalanceAuto' in all_params_after:
+                            print(f"   WhiteBalanceAuto: {all_params_after.get('WhiteBalanceAuto', 'N/A')}")
+                        
+                        print(f"\n   === NIVEL DE NEGRO/GAMMA ===")
+                        if 'BlackLevel' in all_params_after:
+                            print(f"   BlackLevel: {all_params_after.get('BlackLevel', 'N/A')}")
+                        if 'Gamma' in all_params_after:
+                            print(f"   Gamma: {all_params_after.get('Gamma', 'N/A')}")
+                        if 'GammaEnable' in all_params_after:
+                            print(f"   GammaEnable: {all_params_after.get('GammaEnable', 'N/A')}")
+                        
+                        print(f"\n   === ADQUISICIÓN ===")
+                        print(f"   AcquisitionFrameRate: {all_params_after.get('AcquisitionFrameRate', 'N/A')} fps")
+                        print(f"   TriggerMode: {all_params_after.get('TriggerMode', 'N/A')}")
+                        
+                        print(f"\n   === IMAGEN ===")
+                        print(f"   PixelFormat: {all_params_after.get('PixelFormat', 'N/A')}")
+                        print(f"   Width x Height: {all_params_after.get('Width', 'N/A')} x {all_params_after.get('Height', 'N/A')}")
+                        print(f"   OffsetX, OffsetY: {all_params_after.get('OffsetX', 'N/A')}, {all_params_after.get('OffsetY', 'N/A')}")
+                        
+                        # Generar código para fijar valores
+                        et_val = all_params_after.get('ExposureTime', 'N/A')
+                        gain_val = all_params_after.get('Gain', 'N/A')
+                        print(f"\n💡 Para fijar estos valores al inicio, edita líneas 3742-3743:")
+                        print(f"   safe_set(cam, 'ExposureTime', {et_val})")
+                        print(f"   safe_set(cam, 'Gain', {gain_val})")
+                        sys.stdout.flush()
+                        print("\n" + "="*60)
+                        print("🎨 AUTO CAL - COMPLETADO")
+                        print("="*60 + "\n")
+                        sys.stdout.flush()
+                        
+                        # GUARDAR EN ARCHIVO PARA VISUALIZAR
+                        output_file = "/tmp/autocal_values.txt"
+                        with open(output_file, 'w') as f:
+                            f.write("="*60 + "\n")
+                            f.write("🎨 AUTO CALIBRATION VALUES\n")
+                            f.write("="*60 + "\n\n")
+                            f.write("📊 PARAMETERS BEFORE:\n")
+                            for param, val in all_params_before.items():
+                                f.write(f"   {param}: {val}\n")
+                            f.write(f"\n📊 PARAMETERS AFTER:\n")
+                            for param, val in all_params_after.items():
+                                val_before = all_params_before.get(param, None)
+                                if val != val_before:
+                                    f.write(f"   {param}: {val} ← (changed from {val_before})\n")
+                                else:
+                                    f.write(f"   {param}: {val}\n")
+                            f.write(f"\n💡 TO FIX AT STARTUP, edit lines 3742-3743:\n")
+                            f.write(f"   safe_set(cam, 'ExposureTime', {et_val})\n")
+                            f.write(f"   safe_set(cam, 'Gain', {gain_val})\n")
+                        print(f"💾 Valores guardados en: {output_file}")
+                        sys.stdout.flush()
+                        
                     except Exception as e:
                         print(f"❌ Error en Auto Cal: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        sys.stdout.flush()
                 threading.Thread(target=_auto_cal, daemon=True).start()
                 button_clicked = None
                 
@@ -4143,6 +4518,9 @@ def main():
                 except:
                     pass
                 
+                # Dump final de parámetros antes de cerrar
+                dump_cam(cam)
+                
                 # cerrar ventanas auxiliares si estaban abiertas
                 safe_destroy(WIN_CONFIG)
                 safe_destroy(WIN_INFO)
@@ -4179,9 +4557,18 @@ def main():
                             # sin frame esta vez; sigue el loop
                             ui_profiler.end()
                             continue
-                        img, ts_cap = fb
+                        img, ts_cap, lat_ms = fb
                         capture_time = (time.time() - capture_start) * 1000
-                        print(f"[CAPTURE] ⏱️ Tiempo captura: {capture_time:.2f}ms")
+                        if f % 30 == 0:
+                            print(f"[CAPTURE] ⏱️ Tiempo captura: {capture_time:.2f}ms")
+                            if lat_ms is not None:
+                                print(f"[LAT_E2E] 📊 Latencia end-to-end: {lat_ms:.1f}ms")
+                            # Actualizar métricas y logear cada ~30 frames
+                            try:
+                                update_performance_metrics(fps=max(0.1, 1000.0/max(1.0, capture_time)), memory_usage=0.0)
+                                log_performance()
+                            except Exception:
+                                pass
                         ui_profiler.mark("frame_capture_done")
                     except GenTLBusyException:
                         # El módulo está ocupado; reintentar en el siguiente ciclo sin cerrar adquisición
@@ -4201,7 +4588,8 @@ def main():
                     ui_profiler.mark("gamma_done")
                     
                     process_time = (time.time() - process_start) * 1000
-                    print(f"[PROCESS] ⏱️ Tiempo procesamiento imagen: {process_time:.2f}ms")
+                    if f % 30 == 0:
+                        print(f"[PROCESS] ⏱️ Tiempo procesamiento imagen: {process_time:.2f}ms")
                     
                     # Política latest-frame: publicar el último frame disponible (sin cola)
                     if yolo_running:
@@ -4276,6 +4664,15 @@ def main():
                     except Exception:
                         pass
                     
+                    # Guardar snapshot periódico (cada 30 min máx)
+                    try:
+                        now_ts = time.time()
+                        if (now_ts - last_snapshot_time) >= (30*60):
+                            save_snapshot(img, now_ts=now_ts, level='info')
+                            last_snapshot_time = now_ts
+                    except Exception:
+                        pass
+
                     # Trabajar 1:1 con el tamaño de la cámara: no reescalar aquí
                     ui_profiler.mark("no_resize_camera")
                     
@@ -4385,18 +4782,20 @@ def main():
                     ui_profiler.mark("compose_done")
                     # === TIMING DE DISPLAY (RDP/REMOTO) ===
                     display_start = time.time()
-                    cv2_profiler.start("imshow")
-                    cv2.imshow(WIN_MAIN, interface_completa)
-                    cv2_profiler.end()
+                    if not HEADLESS:
+                        cv2_profiler.start("imshow")
+                        cv2.imshow(WIN_MAIN, interface_completa)
+                        cv2_profiler.end()
                     display_time = (time.time() - display_start) * 1000
-                    print(f"[DISPLAY] ⏱️ Tiempo display: {display_time:.2f}ms")
+                    if f % 30 == 0:
+                        print(f"[DISPLAY] ⏱️ Tiempo display: {display_time:.2f}ms")
                     ui_profiler.mark("display_done")
                     
                     # Finalizar profiling del frame
                     ui_profiler.end()
                     
-                    # Reporte de profiling cada 60 frames
-                    if f % 60 == 0:
+                    # Reporte de profiling cada 30 frames
+                    if f % 30 == 0:
                         print("\n" + "="*60)
                         print("📊 REPORTE DE RENDIMIENTO COMPLETO")
                         print("="*60)
@@ -4419,7 +4818,7 @@ def main():
                     # <<< PERF UI
                     
                     f += 1
-                    if f % 200 == 0:  # menos logs para mejor rendimiento
+                    if f % 30 == 0:  # menos logs para mejor rendimiento
                         if t0 is not None:
                             elapsed = time.time() - t0
                             fps = f / elapsed if elapsed > 0 else 0
@@ -4469,15 +4868,27 @@ def main():
                 display_start = time.time()
                 cv2.imshow(WIN_MAIN, interface_completa)
                 display_time = (time.time() - display_start) * 1000
-                print(f"[DISPLAY] ⏱️ Tiempo display (sin cámara): {display_time:.2f}ms")
+                if f % 30 == 0:
+                    print(f"[DISPLAY] ⏱️ Tiempo display (sin cámara): {display_time:.2f}ms")
             
             # === TIMING TOTAL DE INTERFAZ ===
             total_ui_time = (time.time() - ui_start_time) * 1000
-            print(f"[UI_TOTAL] ⏱️ Tiempo total interfaz: {total_ui_time:.2f}ms")
+            if f % 30 == 0:
+                print(f"[UI_TOTAL] ⏱️ Tiempo total interfaz: {total_ui_time:.2f}ms")
             
+            # Watchdog ping
+            try:
+                if os.environ.get('WATCHDOG_USEC'):
+                    now = time.time()
+                    if (now - last_watchdog) >= watchdog_interval:
+                        _sd_notify("WATCHDOG=1")
+                        last_watchdog = now
+            except Exception:
+                pass
+
             # Manejar teclas - waitKey más corto para mejor responsividad
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q') or key == 27:
+            key = cv2.waitKey(1) & 0xFF if not HEADLESS else -1
+            if not HEADLESS and (key == ord('q') or key == 27):
                 break
             elif key == ord('p') or key == ord('P'):
                 # Mostrar reporte de rendimiento con tecla 'P'
@@ -4551,6 +4962,11 @@ if __name__ == "__main__":
     finally:
         # Limpiar archivo temporal al cerrar
         cleanup_tracker_yaml()
+        try:
+            log_system_event("shutdown", "PruebaAravis finalizado")
+            _sd_notify("STOPPING=1")
+        except Exception:
+            pass
 
 def extract_roi_rgb(frame_bgr, x1, y1, x2, y2, size=(224,224)):
     h, w = frame_bgr.shape[:2]

@@ -17,7 +17,7 @@
 
 ## Verificación:
 ```bash
-cd /home/nvidia/Desktop/Calippo_jetson-aravis-yolo/gentl
+cd /home/nvidia/Desktop/Calippo_jetson/gentl
 source .venv/bin/activate
 python3 diagnostico_jetpack511.py
 ```

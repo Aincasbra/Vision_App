@@ -1,4 +1,4 @@
-#!/home/nvidia/Desktop/Calippo_jetson-aravis-yolo/gentl/.venv/bin/python
+#!/home/nvidia/Desktop/Calippo_jetson/gentl/.venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

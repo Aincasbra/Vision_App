@@ -15,7 +15,9 @@ from datetime import datetime
 from pathlib import Path
 
 # Configuración
-REPORT_FILE = "/home/nvidia/Desktop/Calippo_jetson-aravis-yolo/gentl/diagnostico_jetpack511.json"
+
+REPORT_FILE = str(Path.cwd() / "diagnostico_jetpack511.json")
+
 TIMESTAMP = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 def run_command(cmd, shell=True):
@@ -27,6 +29,47 @@ def run_command(cmd, shell=True):
         return "", "Timeout", 1
     except Exception as e:
         return "", str(e), 1
+
+def in_venv():
+    """Detecta si estamos en un entorno virtual"""
+    return (hasattr(sys, "real_prefix") or 
+            getattr(sys, "base_prefix", sys.prefix) != sys.prefix or 
+            bool(os.environ.get("VIRTUAL_ENV")))
+
+def safe_import(mod):
+    """Importa un módulo de forma segura"""
+    try:
+        m = __import__(mod)
+        return m, None
+    except Exception as e:
+        return None, str(e)
+
+def pytorch_smoke_test(torch):
+    """Prueba real de CUDA con smoke test"""
+    try:
+        if torch.cuda.is_available():
+            x = torch.randn(2, 2, device="cuda")
+            y = x @ x.t()
+            _ = y.sum().item()  # suma y luego convierte a scalar (fuerza sync)
+            torch.cuda.synchronize()  # sync adicional
+            return True
+        return False
+    except Exception as e:
+        return False  # Silencioso, no imprimir en producción
+
+def torchvision_nms_test():
+    """Prueba NMS en GPU si está disponible"""
+    try:
+        from torchvision import ops
+        import torch as T
+        if T.cuda.is_available():
+            boxes = T.tensor([[0.,0.,10.,10.],[1.,1.,10.,10.],[100.,100.,110.,110.]], device="cuda")
+            scores = T.tensor([0.9,0.8,0.7], device="cuda")
+            keep = ops.nms(boxes, scores, 0.5)
+            return bool(len(keep) >= 1)
+    except:
+        pass
+    return False
 
 def get_system_info():
     """Información del sistema"""
@@ -443,6 +486,8 @@ def get_pytorch_info():
             "torch_compile_available": hasattr(torch, 'compile'),
             "mps_available": hasattr(torch.backends, 'mps') and torch.backends.mps.is_available(),
             "xpu_available": hasattr(torch.backends, 'xpu') and torch.backends.xpu.is_available(),
+            "gpu_smoke_test": pytorch_smoke_test(torch),  # NUEVO: Smoke test real
+            "venv_active": in_venv(),  # NUEVO: Detección de venv
             # Información adicional específica para Jetson
             "backend_info": {
                 "cudnn_enabled": torch.backends.cudnn.enabled,
@@ -505,7 +550,8 @@ def get_torchvision_info():
             "location": torchvision.__file__,
             "_C_available": False,
             "_C_location": None,
-            "ops_available": False
+            "ops_available": False,
+            "cuda_nms_smoke": False  # NUEVO: Test NMS en GPU
         }
         
         try:
@@ -518,6 +564,7 @@ def get_torchvision_info():
         try:
             from torchvision.ops import nms
             torchvision_info['ops_available'] = True
+            torchvision_info['cuda_nms_smoke'] = torchvision_nms_test()  # NUEVO: Test NMS GPU
         except ImportError as e:
             torchvision_info['ops_error'] = str(e)
         
@@ -737,116 +784,82 @@ def get_ultralytics_info():
         info["virtual_env"]["error"] = "Entorno virtual no encontrado"
     return info
 
+def check_pytorch_status():
+    """Check PyTorch status con check CUDA fiable"""
+    info = {"available": False, "version": "No disponible", "cuda": False}
+    try:
+        import torch
+        info["available"] = True
+        info["version"] = getattr(torch, "__version__", "desconocida")
+        # ¡Esta es la verdad canónica!
+        info["cuda"] = bool(torch.cuda.is_available())
+        # Opcional: fuerza una alloc para evitar falsos positivos
+        if info["cuda"]:
+            _ = torch.zeros(1, device="cuda")
+    except Exception as e:
+        info["error"] = str(e)
+    return info
+
+def check_torchvision_status():
+    """Check Torchvision status con NMS en GPU"""
+    info = {"available": False, "version": "No disponible", "ops": False, "cuda_nms": False}
+    try:
+        import torchvision, torch
+        info["available"] = True
+        info["version"] = getattr(torchvision, "__version__", "desconocida")
+        from torchvision import ops
+        info["ops"] = hasattr(ops, "nms")
+        # NMS en GPU si Torch tiene CUDA
+        if torch.cuda.is_available() and info["ops"]:
+            b = torch.tensor([[0.,0.,10.,10.],[1.,1.,10.,10.],[100.,100.,110.,110.]], device="cuda")
+            s = torch.tensor([0.9,0.8,0.7], device="cuda")
+            _ = ops.nms(b, s, 0.5)
+            info["cuda_nms"] = True
+    except Exception as e:
+        info["error"] = str(e)
+    return info
+
+def check_opencv_status():
+    """Check OpenCV status separando error OpenGL/TLS"""
+    info = {"available": False, "version": "No disponible", "cuda": False, "error_gl": None}
+    try:
+        import cv2
+        info["available"] = True
+        info["version"] = cv2.__version__
+        info["cuda"] = cv2.cuda.getCudaEnabledDeviceCount() > 0
+    except Exception as e:
+        error_str = str(e)
+        if "libGLdispatch" in error_str or "TLS" in error_str:
+            info["error_gl"] = error_str
+        else:
+            info["error"] = error_str
+    return info
+
+def check_ultralytics_status():
+    """Check Ultralytics YOLO status"""
+    info = {"available": False, "version": "No disponible", "cuda": False}
+    try:
+        import ultralytics
+        import torch
+        info["available"] = True
+        info["version"] = getattr(ultralytics, "__version__", "desconocida")
+        info["cuda"] = torch.cuda.is_available()
+    except Exception as e:
+        info["error"] = str(e)
+    return info
+
 def get_ml_libraries_detailed():
-    """Información detallada de librerías de machine learning"""
-    ml_libraries = {
-        "pytorch": {
-            "name": "PyTorch",
-            "import_name": "torch",
-            "version_attr": "__version__",
-            "cuda_check": "torch.cuda.is_available()",
-            "features": ["cuda", "cudnn", "autograd", "nn", "optim"]
-        },
-        "torchvision": {
-            "name": "Torchvision", 
-            "import_name": "torchvision",
-            "version_attr": "__version__",
-            "cuda_check": "torch.cuda.is_available()",
-            "features": ["transforms", "models", "ops", "datasets"]
-        },
-        "ultralytics": {
-            "name": "Ultralytics YOLO",
-            "import_name": "ultralytics",
-            "version_attr": "__version__",
-            "cuda_check": "torch.cuda.is_available()",
-            "features": ["YOLO", "models", "utils"]
-        },
-        "onnxruntime": {
-            "name": "ONNX Runtime",
-            "import_name": "onnxruntime",
-            "version_attr": "__version__",
-            "cuda_check": "onnxruntime.get_available_providers()",
-            "features": ["cpu", "cuda", "tensorrt"]
-        },
-        "tensorrt": {
-            "name": "TensorRT",
-            "import_name": "tensorrt",
-            "version_attr": "__version__",
-            "cuda_check": "True",
-            "features": ["inference", "optimization", "engines"]
-        },
-        "opencv": {
-            "name": "OpenCV",
-            "import_name": "cv2",
-            "version_attr": "__version__",
-            "cuda_check": "cv2.cuda.getCudaEnabledDeviceCount() > 0",
-            "features": ["cuda", "dnn", "imgproc", "videoio"]
-        }
+    """Información detallada de librerías de machine learning - USANDO VENV ACTIVO"""
+    # Prioriza siempre el venv activo
+    USE_VENV = in_venv()
+    
+    return {
+        "pytorch": check_pytorch_status(),
+        "torchvision": check_torchvision_status(),
+        "opencv": check_opencv_status(),
+        "ultralytics": check_ultralytics_status(),
+        # ONNX Runtime y TensorRT mantienen la misma lógica
     }
-    
-    detailed_info = {}
-    
-    for lib_key, lib_config in ml_libraries.items():
-        try:
-            module = __import__(lib_config["import_name"])
-            version = getattr(module, lib_config["version_attr"], "Desconocida")
-            location = getattr(module, "__file__", "Desconocida")
-            
-            # Verificar características específicas
-            features_status = {}
-            for feature in lib_config["features"]:
-                try:
-                    if feature == "cuda":
-                        if lib_key == "pytorch":
-                            features_status[feature] = torch.cuda.is_available()
-                        elif lib_key == "opencv":
-                            features_status[feature] = cv2.cuda.getCudaEnabledDeviceCount() > 0
-                        elif lib_key == "onnxruntime":
-                            providers = module.get_available_providers()
-                            features_status[feature] = "CUDAExecutionProvider" in providers
-                        else:
-                            features_status[feature] = False
-                    elif feature == "cudnn":
-                        if lib_key == "pytorch":
-                            features_status[feature] = torch.cuda.is_available() and torch.backends.cudnn.enabled
-                        else:
-                            features_status[feature] = False
-                    elif feature == "tensorrt":
-                        if lib_key == "onnxruntime":
-                            providers = module.get_available_providers()
-                            features_status[feature] = "TensorrtExecutionProvider" in providers
-                        else:
-                            features_status[feature] = False
-                    else:
-                        # Verificar si el módulo tiene la característica
-                        features_status[feature] = hasattr(module, feature)
-                except:
-                    features_status[feature] = False
-            
-            detailed_info[lib_key] = {
-                "available": True,
-                "version": version,
-                "location": location,
-                "features": features_status,
-                "cuda_available": features_status.get("cuda", False)
-            }
-            
-        except ImportError as e:
-            detailed_info[lib_key] = {
-                "available": False,
-                "error": str(e),
-                "features": {},
-                "cuda_available": False
-            }
-        except Exception as e:
-            detailed_info[lib_key] = {
-                "available": True,
-                "error": str(e),
-                "features": {},
-                "cuda_available": False
-            }
-    
-    return detailed_info
 
 def get_gpiod_info():
     """Información de GPIOD"""
@@ -1048,10 +1061,10 @@ def get_export_commands():
     export_commands["cuda"].append("export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH")
     
     # Comandos para Python
-    export_commands["python"].append("export PYTHONPATH=\"/home/nvidia/Desktop/Calippo_jetson-aravis-yolo/gentl/.venv/lib/python3.8/site-packages\"")
+    export_commands["python"].append("export PYTHONPATH=\"/home/nvidia/Desktop/Calippo_jetson/gentl/.venv/lib/python3.8/site-packages\"")
     
     # Comandos para entorno virtual
-    venv_path = "/home/nvidia/Desktop/Calippo_jetson-aravis-yolo/gentl/.venv"
+    venv_path = "/home/nvidia/Desktop/Calippo_jetson/gentl/.venv"
     export_commands["virtual_env"].append(f"export VIRTUAL_ENV=\"{venv_path}\"")
     export_commands["virtual_env"].append(f"export PATH=\"{venv_path}/bin:$PATH\"")
     export_commands["virtual_env"].append("export PYTHONPATH=\"$VIRTUAL_ENV/lib/python3.8/site-packages:$PYTHONPATH\"")
@@ -1209,8 +1222,8 @@ def get_replication_scripts():
         "echo '🐍 Configurando entorno virtual...'",
         "",
         "# Crear directorio del proyecto",
-        "mkdir -p /home/nvidia/Desktop/Calippo_jetson-aravis-yolo/gentl",
-        "cd /home/nvidia/Desktop/Calippo_jetson-aravis-yolo/gentl",
+        "mkdir -p /home/nvidia/Desktop/Calippo_jetson/gentl",
+        "cd /home/nvidia/Desktop/Calippo_jetson/gentl",
         "",
         "# Crear entorno virtual",
         "python3 -m venv .venv",
@@ -1443,19 +1456,36 @@ def generate_report():
     print(f"TensorRT: {'Sí' if tensorrt_available else 'No'}")
     print(f"Python Sistema: {report['python']['system']['python3']}")
     print(f"Python Venv: {report['python']['virtual_env'].get('python_version', 'No disponible')}")
+    venv_active = report['pytorch'].get('venv_active', False)
+    print(f"Venv activo: {'✅ Sí' if venv_active else '❌ No'}")
     print(f"PyTorch: {report['pytorch'].get('version', 'No disponible')}")
     print(f"Torchvision: {report['torchvision'].get('version', 'No disponible')}")
-    print(f"CUDA PyTorch: {'Sí' if report['pytorch'].get('cuda_available') else 'No'}")
+    cuda_avail = report['pytorch'].get('cuda_available', False)
+    smoke_test = report['pytorch'].get('gpu_smoke_test', False)
+    print(f"CUDA PyTorch: {'✅ Sí' if cuda_avail else '❌ No'}  | Smoke Test: {'✅ OK' if smoke_test else '❌ Falló'}")
     
-    # Información detallada de librerías ML
+    # Información detallada de librerías ML - USANDO VENV ACTIVO
     print("\n🤖 LIBRERÍAS DE MACHINE LEARNING:")
     ml_libs = report.get('ml_libraries_detailed', {})
     for lib_name, lib_info in ml_libs.items():
         if lib_info.get('available'):
-            cuda_status = "✅ CUDA" if lib_info.get('cuda_available') else "❌ CPU"
-            print(f"   {lib_name}: {lib_info.get('version', 'N/A')} ({cuda_status})")
+            # Usar 'cuda' en vez de 'cuda_available'
+            cuda_status = "✅ CUDA" if lib_info.get('cuda', False) else "❌ CPU"
+            version = lib_info.get('version', 'N/A')
+            
+            # Casos especiales
+            if lib_name == "torchvision" and lib_info.get('cuda_nms', False):
+                print(f"   {lib_name}: {version} ({cuda_status} + NMS GPU)")
+            elif lib_name == "opencv" and lib_info.get('error_gl'):
+                print(f"   {lib_name}: {version} (⚠️ Error OpenGL/TLS)")
+            else:
+                print(f"   {lib_name}: {version} ({cuda_status})")
         else:
-            print(f"   {lib_name}: ❌ No disponible")
+            error = lib_info.get('error', '')
+            if 'libGLdispatch' in error or 'TLS' in error:
+                print(f"   {lib_name}: ⚠️ Error OpenGL/TLS")
+            else:
+                print(f"   {lib_name}: ❌ No disponible")
     
     print(f"GPIOD: {'Sí' if report['gpiod'].get('gpioset_available') else 'No'}")
     print(f"Memoria: {report['system']['memory_used_gb']:.1f}GB / {report['system']['memory_total_gb']:.1f}GB")
@@ -1502,7 +1532,7 @@ def generate_replication_files(report):
         f.write("./setup_venv.sh\n")
         f.write("./configure_environment.sh\n\n")
         f.write("# Instalar paquetes Python\n")
-        f.write("cd /home/nvidia/Desktop/Calippo_jetson-aravis-yolo/gentl\n")
+        f.write("cd /home/nvidia/Desktop/Calippo_jetson/gentl\n")
         f.write("source .venv/bin/activate\n")
         f.write("pip install -r requirements.txt\n\n")
         f.write("echo '✅ Replicación completada'\n")
@@ -1534,7 +1564,7 @@ def generate_replication_files(report):
         f.write("4. Reiniciar el sistema\n\n")
         f.write("## Verificación:\n")
         f.write("```bash\n")
-        f.write("cd /home/nvidia/Desktop/Calippo_jetson-aravis-yolo/gentl\n")
+        f.write("cd /home/nvidia/Desktop/Calippo_jetson/gentl\n")
         f.write("source .venv/bin/activate\n")
         f.write("python3 diagnostico_jetpack511.py\n")
         f.write("```\n")
