@@ -24,6 +24,9 @@ import torch.nn.functional as F
 import subprocess # Para ejecutar comandos del sistema 
 import shutil # Para operaciones de alto nivel en archivos y directorios 
 from time import perf_counter
+from core.profiling import PerformanceProfiler
+from vision.ops import merge_overlapping_detections, calculate_iou
+from vision.tracking import assign_stable_ids
 import sys
 import socket  # para notificar a systemd (watchdog)
 
@@ -39,6 +42,9 @@ from logging_system import (
     log_performance,
     get_production_logger,
 )
+
+# Logging unificado (debe estar disponible antes de funciones que lo usen)
+from core.logging import get_logger, log_info, log_warning, log_error
 
 # ===== MODO HEADLESS (sin UI/Display) =====
 HEADLESS = os.environ.get("HEADLESS", "0") == "1"
@@ -77,44 +83,7 @@ def _sd_notify(msg: str) -> None:
         pass
 
 # --- Utilidad: fusionar detecciones muy solapadas para evitar duplicados ---
-def merge_overlapping_detections(xyxy, confs, clss, iou_threshold=0.7):
-    """Fusiona detecciones que se solapan fuertemente manteniendo la de mayor confianza."""
-    if len(xyxy) == 0:
-        return xyxy, confs, clss
-
-    xyxy = np.asarray(xyxy)
-    confs = np.asarray(confs)
-    clss = np.asarray(clss)
-
-    keep = []
-    used = np.zeros(len(xyxy), dtype=bool)
-    for i in range(len(xyxy)):
-        if used[i]:
-            continue
-        xi1, yi1, xi2, yi2 = xyxy[i]
-        ai = max(0, (xi2 - xi1)) * max(0, (yi2 - yi1))
-        group = [i]
-        used[i] = True
-        for j in range(i + 1, len(xyxy)):
-            if used[j]:
-                continue
-            xj1, yj1, xj2, yj2 = xyxy[j]
-            aj = max(0, (xj2 - xj1)) * max(0, (yj2 - yj1))
-            xx1 = max(xi1, xj1)
-            yy1 = max(yi1, yj1)
-            xx2 = min(xi2, xj2)
-            yy2 = min(yi2, yj2)
-            inter = max(0, xx2 - xx1) * max(0, yy2 - yy1)
-            union = ai + aj - inter
-            iou = inter / union if union > 0 else 0.0
-            if iou >= iou_threshold and clss[i] == clss[j]:
-                group.append(j)
-                used[j] = True
-        best_idx = max(group, key=lambda k: confs[k])
-        keep.append(best_idx)
-
-    keep = np.array(keep, dtype=int)
-    return xyxy[keep], confs[keep], clss[keep]
+# merge_overlapping_detections movido a vision.ops
 
 def calculate_object_similarity(box1, box2, class1, class2):
     """Calcula similitud entre dos objetos usando múltiples criterios"""
@@ -258,110 +227,7 @@ def assign_stable_ids(xyxy, confs, clss, current_frame):
     
     return stable_ids
 
-# ===== SISTEMA DE PROFILING AVANZADO =====
-class PerformanceProfiler:
-    """Sistema de profiling para medir tiempos de cada componente"""
-    def __init__(self, name="Profiler", enable=True):
-        self.name = name
-        self.enable = enable
-        self.times = {}
-        self.start_time = None
-        self.current_operation = None
-        self.frame_count = 0
-        self.avg_times = {}
-        self.max_times = {}
-        self.min_times = {}
-        
-    def start(self, operation):
-        """Inicia medición de una operación"""
-        if not self.enable:
-            return
-        self.current_operation = operation
-        self.start_time = perf_counter()
-        
-    def mark(self, operation):
-        """Marca el fin de una operación y el inicio de la siguiente"""
-        if not self.enable or self.start_time is None:
-            return
-            
-        if self.current_operation:
-            elapsed = perf_counter() - self.start_time
-            if self.current_operation not in self.times:
-                self.times[self.current_operation] = []
-            self.times[self.current_operation].append(elapsed)
-            
-            # Actualizar estadísticas
-            if self.current_operation not in self.avg_times:
-                self.avg_times[self.current_operation] = 0
-                self.max_times[self.current_operation] = 0
-                self.min_times[self.current_operation] = float('inf')
-                
-            # Promedio móvil
-            self.avg_times[self.current_operation] = 0.9 * self.avg_times[self.current_operation] + 0.1 * elapsed
-            self.max_times[self.current_operation] = max(self.max_times[self.current_operation], elapsed)
-            self.min_times[self.current_operation] = min(self.min_times[self.current_operation], elapsed)
-        
-        self.current_operation = operation
-        self.start_time = perf_counter()
-        
-    def end(self):
-        """Termina la medición actual"""
-        if not self.enable or self.start_time is None or not self.current_operation:
-            return
-            
-        elapsed = perf_counter() - self.start_time
-        if self.current_operation not in self.times:
-            self.times[self.current_operation] = []
-        self.times[self.current_operation].append(elapsed)
-        
-        # Actualizar estadísticas
-        if self.current_operation not in self.avg_times:
-            self.avg_times[self.current_operation] = 0
-            self.max_times[self.current_operation] = 0
-            self.min_times[self.current_operation] = float('inf')
-            
-        self.avg_times[self.current_operation] = 0.9 * self.avg_times[self.current_operation] + 0.1 * elapsed
-        self.max_times[self.current_operation] = max(self.max_times[self.current_operation], elapsed)
-        self.min_times[self.current_operation] = min(self.min_times[self.current_operation], elapsed)
-        
-        self.current_operation = None
-        self.start_time = None
-        
-    def get_report(self, show_details=True):
-        """Genera reporte de rendimiento"""
-        if not self.enable or not self.avg_times:
-            return "Profiling deshabilitado o sin datos"
-            
-        report = f"\n=== {self.name} - REPORTE DE RENDIMIENTO ===\n"
-        
-        # Ordenar por tiempo promedio descendente
-        sorted_ops = sorted(self.avg_times.items(), key=lambda x: x[1], reverse=True)
-        
-        total_time = sum(self.avg_times.values())
-        
-        for operation, avg_time in sorted_ops:
-            percentage = (avg_time / total_time) * 100 if total_time > 0 else 0
-            max_time = self.max_times.get(operation, 0)
-            min_time = self.min_times.get(operation, float('inf'))
-            min_time = min_time if min_time != float('inf') else 0
-            
-            report += f"{operation:20s}: {avg_time*1000:6.2f}ms avg | {max_time*1000:6.2f}ms max | {min_time*1000:6.2f}ms min | {percentage:5.1f}%\n"
-        
-        report += f"{'TOTAL':20s}: {total_time*1000:6.2f}ms\n"
-        
-        if show_details and self.frame_count > 0:
-            fps = self.frame_count / total_time if total_time > 0 else 0
-            report += f"FPS estimado: {fps:.1f}\n"
-            
-        return report
-        
-    def reset(self):
-        """Reinicia las estadísticas"""
-        self.times.clear()
-        self.avg_times.clear()
-        self.max_times.clear()
-        self.min_times.clear()
-        self.frame_count = 0
+# PerformanceProfiler movido a core.profiling
 
 # Instancias globales de profiling
 yolo_profiler = PerformanceProfiler("YOLO", enable=True)
@@ -385,10 +251,10 @@ def initialize_unified_device():
     global UNIFIED_DEVICE
     if UNIFIED_DEVICE is None:
         UNIFIED_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"🔧 Dispositivo unificado inicializado: {UNIFIED_DEVICE}")
+        log_info(f"🔧 Dispositivo unificado inicializado: {UNIFIED_DEVICE}")
         if torch.cuda.is_available():
-            print(f"   - GPU: {torch.cuda.get_device_name(0)}")
-            print(f"   - Memoria total: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+            log_info(f"   - GPU: {torch.cuda.get_device_name(0)}")
+            log_info(f"   - Memoria total: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     return UNIFIED_DEVICE
 
 # Parámetros configurables del clasificador
@@ -400,121 +266,9 @@ track_votes = {}  # tid -> {"best_area":0, "best_roi":None, "sum_prob":np.zeros(
 results_summary = {}  # tid -> texto final (Buena / Mala(Mancha) / Mala(Empaque))
 
 # ===== FUNCIONES DEL CLASIFICADOR =====
-def clf_load(model_path=""):
-    """Carga el clasificador PyTorch unificado"""
-    global CLF_MODEL, CLF_DEVICE, UNIFIED_DEVICE
-    model_path = model_path if model_path else CLF_MODEL_PATH
-    try:
-        # Usar dispositivo unificado (mismo que YOLO)
-        if UNIFIED_DEVICE is None:
-            UNIFIED_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        CLF_DEVICE = UNIFIED_DEVICE
-        print(f"🔧 Clasificador usando dispositivo unificado: {CLF_DEVICE}")
-        
-        # Cargar modelo PyTorch (puede ser estado del modelo o modelo completo)
-        checkpoint = torch.load(model_path, map_location=CLF_DEVICE)
-        
-        if isinstance(checkpoint, dict) and 'model' in checkpoint:
-            # Es un checkpoint con estado del modelo
-            CLF_MODEL = checkpoint['model']
-        elif isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
-            # Es un checkpoint con state_dict
-            print("⚠️ Modelo con state_dict - necesitamos la arquitectura")
-            CLF_MODEL = None
-        elif isinstance(checkpoint, dict) and 'features.0.0.weight' in checkpoint:
-            # Es un state_dict directo con arquitectura personalizada
-            print("🔍 Detectado state_dict personalizado - creando arquitectura...")
-            try:
-                # Crear modelo personalizado basado en MobileNetV2 pero con clasificador diferente
-                from torchvision.models import mobilenet_v2
-                import torch.nn as nn
-                
-                class CustomMobileNetV2(nn.Module):
-                    def __init__(self, num_classes=3):
-                        super().__init__()
-                        # Usar features de MobileNetV2
-                        mobilenet = mobilenet_v2(pretrained=False)
-                        self.features = mobilenet.features
-                        
-                        # Clasificador personalizado (basado en el state_dict)
-                        self.classifier = nn.Sequential(
-                            nn.Dropout(0.2),
-                            nn.Linear(1280, 128),  # Primera capa
-                            nn.ReLU(),
-                            nn.Dropout(0.2),
-                            nn.Linear(128, num_classes)  # Capa final
-                        )
-                    
-                    def forward(self, x):
-                        x = self.features(x)
-                        x = x.mean([2, 3])  # Global average pooling
-                        x = self.classifier(x)
-                        return x
-                
-                CLF_MODEL = CustomMobileNetV2(num_classes=3)
-                CLF_MODEL.load_state_dict(checkpoint)
-                print("✅ Arquitectura personalizada creada y pesos cargados")
-            except Exception as e:
-                print(f"❌ Error creando arquitectura personalizada: {e}")
-                CLF_MODEL = None
-        else:
-            # Es el modelo completo
-            CLF_MODEL = checkpoint
-            
-        if CLF_MODEL is not None:
-            CLF_MODEL.eval()
-            CLF_MODEL.to(CLF_DEVICE)
-        
-        print(f"✅ Clasificador PyTorch cargado: {model_path}")
-        print(f"   Dispositivo: {CLF_DEVICE}")
-        print(f"   Clases: {CLASS_NAMES}")
-        return True
-    except Exception as e:
-        print(f"❌ No pude cargar el modelo PyTorch: {e}")
-        CLF_MODEL = None
-        return False
+from vision.classifier import clf_load, clf_predict_bgr
 
-def clf_predict_bgr(bgr_roi):
-    """Predice clase con PyTorch unificado."""
-    if CLF_MODEL is None:
-        n = len(CLASS_NAMES)
-        base = [1.0/n]*n
-        return "unknown", 0.0, base
-
-    clf_profiler.start("clf_predict")
-    
-    try:
-        
-        # Preprocesado estándar para clasificación
-        transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-        
-        # Convertir BGR a RGB y aplicar transformaciones
-        rgb_img = cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2RGB)
-        tensor_img = transform(rgb_img).unsqueeze(0).to(CLF_DEVICE)
-        
-        # Inferencia
-        with torch.no_grad():
-            outputs = CLF_MODEL(tensor_img)
-            probabilities = torch.softmax(outputs, dim=1)
-            prob_np = probabilities.cpu().numpy().squeeze()
-            
-        idx = int(np.argmax(prob_np))
-        confidence = float(prob_np[idx])
-        
-        clf_profiler.end()
-        return CLASS_NAMES[idx], confidence, prob_np.tolist()
-        
-    except Exception as e:
-        print(f"❌ Error en clasificación PyTorch: {e}")
-        clf_profiler.end()
-        n = len(CLASS_NAMES)
-        base = [1.0/n]*n
-        return "unknown", 0.0, base
+# clf_predict_bgr movido a vision.classifier
 
 def circle_crop(img, cx, cy, r):
     """Recorta una región circular de la imagen"""
@@ -603,7 +357,7 @@ def finalize_track_class(tid, image_width=None):
         verdict = f"Desconocida ({clase})"
 
     results_summary[tid] = verdict
-    print(f"[INFO] Lata ID={tid} → {verdict} (conf={conf:.2f})")
+    log_info(f"[INFO] Lata ID={tid} → {verdict} (conf={conf:.2f})")
 
     # ===== Logging de visión por lata =====
     try:
@@ -680,9 +434,9 @@ def set_camera_param(device, name, value):
                 device.set_float_feature_value("Gain", float(value))
             except Exception:
                 device.set_integer_feature_value("Gain", int(value))
-        print(f"[CAM] {name} set to {value}")
+        log_info(f"[CAM] {name} set to {value}")
     except Exception as e:
-        print(f"[ERROR] Cannot set {name}: {e}")
+        log_error(f"[ERROR] Cannot set {name}: {e}")
 
 def dump_cam(device):
     """Dump de parámetros de la cámara para debugging"""
@@ -700,26 +454,26 @@ def dump_cam(device):
         except Exception as e:
             return f"ERR: {e}"
     
-    print("\n" + "="*60)
-    print("📷 PARÁMETROS DE CÁMARA")
-    print("="*60)
-    print(f"PixelFormat: {g('PixelFormat')}")
-    print(f"ExposureAuto: {g('ExposureAuto')}")
-    print(f"ExposureTime (us): {g('ExposureTime')}")
-    print(f"GainAuto: {g('GainAuto')}")
-    print(f"Gain (dB): {g('Gain')}")
-    print(f"AcquisitionFrameRate (fps): {g('AcquisitionFrameRate')}")
-    print(f"TriggerMode: {g('TriggerMode')}")
-    print(f"Width: {g('Width')} x Height: {g('Height')}")
-    print(f"OffsetX: {g('OffsetX')}, OffsetY: {g('OffsetY')}")
-    print("="*60 + "\n")
+    log_info("\n" + "="*60)
+    log_info("📷 PARÁMETROS DE CÁMARA")
+    log_info("="*60)
+    log_info(f"PixelFormat: {g('PixelFormat')}")
+    log_info(f"ExposureAuto: {g('ExposureAuto')}")
+    log_info(f"ExposureTime (us): {g('ExposureTime')}")
+    log_info(f"GainAuto: {g('GainAuto')}")
+    log_info(f"Gain (dB): {g('Gain')}")
+    log_info(f"AcquisitionFrameRate (fps): {g('AcquisitionFrameRate')}")
+    log_info(f"TriggerMode: {g('TriggerMode')}")
+    log_info(f"Width: {g('Width')} x Height: {g('Height')}")
+    log_info(f"OffsetX: {g('OffsetX')}, OffsetY: {g('OffsetY')}")
+    log_info("="*60 + "\n")
 
 # ===== OPTIMIZACIONES DE RENDIMIENTO =====
 def optimize_for_high_speed():
     """Aplica optimizaciones específicas para alta velocidad (300 latas/min)"""
     global PROCESS_EVERY, MISS_HOLD, RESULT_TTL_S, YOLO_CONF, YOLO_IOU
     
-    print("🚀 APLICANDO OPTIMIZACIONES PARA ALTA VELOCIDAD (300 latas/min)")
+    log_info("🚀 APLICANDO OPTIMIZACIONES PARA ALTA VELOCIDAD (300 latas/min)")
     
     # Reducir procesamiento de frames (más agresivo)
     # PROCESS_EVERY = 2  # Comentado para usar valor de configuración principal
@@ -734,18 +488,18 @@ def optimize_for_high_speed():
     YOLO_CONF = 0.4  # Confianza algo más alta para evitar duplicados
     YOLO_IOU = 0.7   # IOU más alto para suprimir cajas solapadas
     
-    print(f"✅ Optimizaciones aplicadas:")
-    print(f"   - Procesa 1 de cada {PROCESS_EVERY} frames")
-    print(f"   - Hold: {MISS_HOLD} frames")
-    print(f"   - TTL: {RESULT_TTL_S}s")
-    print(f"   - YOLO Conf: {YOLO_CONF}, IOU: {YOLO_IOU}")
+    log_info(f"✅ Optimizaciones aplicadas:")
+    log_info(f"   - Procesa 1 de cada {PROCESS_EVERY} frames")
+    log_info(f"   - Hold: {MISS_HOLD} frames")
+    log_info(f"   - TTL: {RESULT_TTL_S}s")
+    log_info(f"   - YOLO Conf: {YOLO_CONF}, IOU: {YOLO_IOU}")
 
 def enable_cuda_optimizations():
     """Habilita optimizaciones CUDA unificadas con PyTorch"""
     global TORCH_CUDA_AVAILABLE
     
     if TORCH_CUDA_AVAILABLE:
-        print("🚀 HABILITANDO OPTIMIZACIONES CUDA UNIFICADAS")
+        log_info("🚀 HABILITANDO OPTIMIZACIONES CUDA UNIFICADAS")
         
         # Configurar PyTorch para máximo rendimiento en Jetson
         torch.backends.cudnn.benchmark = True
@@ -764,11 +518,11 @@ def enable_cuda_optimizations():
         cv2.setUseOptimized(True)
         cv2.setNumThreads(0)
         
-        print("✅ Optimizaciones CUDA unificadas habilitadas")
-        print(f"   - PyTorch CUDA: {torch.cuda.is_available()}")
-        print(f"   - Dispositivo: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
+        log_info("✅ Optimizaciones CUDA unificadas habilitadas")
+        log_info(f"   - PyTorch CUDA: {torch.cuda.is_available()}")
+        log_info(f"   - Dispositivo: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
     else:
-        print("⚠️ CUDA no disponible, usando optimizaciones CPU")
+        log_warning("⚠️ CUDA no disponible, usando optimizaciones CPU")
 
 def setup_high_performance_tracking():
     """Configura el sistema de tracking para alta velocidad"""
@@ -780,7 +534,7 @@ def setup_high_performance_tracking():
     last_seen.clear()
     last_conf.clear()
     
-    print("✅ Sistema de tracking optimizado para alta velocidad")
+    log_info("✅ Sistema de tracking optimizado para alta velocidad")
 
 # Configuración CUDA para ONNX Runtime y OpenCV
 # Comentado para JetPack 5.1.1 (CUDA 11.4)
@@ -793,13 +547,13 @@ def check_opencv_cuda():
     try:
         cuda_devices = cv2.cuda.getCudaEnabledDeviceCount()
         if cuda_devices > 0:
-            print(f"✅ OpenCV con soporte CUDA: {cuda_devices} dispositivos")
+            log_info(f"✅ OpenCV con soporte CUDA: {cuda_devices} dispositivos")
             return True
         else:
-            print("⚠️ OpenCV sin soporte CUDA")
+            log_warning("⚠️ OpenCV sin soporte CUDA")
             return False
     except:
-        print("⚠️ OpenCV sin soporte CUDA")
+        log_warning("⚠️ OpenCV sin soporte CUDA")
         return False
 
 def check_torch_cuda():
@@ -807,13 +561,13 @@ def check_torch_cuda():
     try:
         cuda_available = torch.cuda.is_available()
         if cuda_available:
-            print(f"✅ PyTorch con soporte CUDA: {torch.cuda.device_count()} dispositivos")
-            print(f"   Dispositivo: {torch.cuda.get_device_name(0)}")
+            log_info(f"✅ PyTorch con soporte CUDA: {torch.cuda.device_count()} dispositivos")
+            log_info(f"   Dispositivo: {torch.cuda.get_device_name(0)}")
         else:
-            print("⚠️ PyTorch sin soporte CUDA")
+            log_warning("⚠️ PyTorch sin soporte CUDA")
         return cuda_available
     except:
-        print("⚠️ PyTorch no disponible")
+        log_warning("⚠️ PyTorch no disponible")
         return False
 
 # Verificar CUDA al inicio (unificado)
@@ -857,572 +611,14 @@ def process_image_with_pytorch(image, operation="resize", target_size=(640, 640)
         return result
         
     except Exception as e:
-        print(f"⚠️ Error en procesamiento PyTorch: {e}, usando OpenCV")
+        log_warning(f"⚠️ Error en procesamiento PyTorch: {e}, usando OpenCV")
         # Fallback a OpenCV
         if operation == "resize":
             return cv2.resize(image, target_size)
         elif operation == "cvt_color":
             return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         return image
-# ===== ARAVIS BACKEND (sustituye al productor GenTL) =====
-import gi
-gi.require_version("Aravis", "0.6")
-from gi.repository import Aravis, GLib
-
-class AravisBackend:
-    """Wrapper mínimo para usar Aravis como fuente de frames BGR."""
-    
-    def __init__(self, index=0, n_buffers=6, bayer_code=cv2.COLOR_BayerBG2BGR):
-        self.index = index
-        self.n_buffers = n_buffers
-        self.bayer_code = bayer_code
-        self.camera = None
-        self.dev = None
-        self.stream = None
-        self.payload = 0
-        self.width = 0
-        self.height = 0
-        self.pixfmt = "Unknown"
-        self.started = False
-        # Métricas de red / stream
-        self._stat_last_t = time.time()
-        self._stat_frames_acc = 0
-        self._stat_bytes_acc = 0
-
-    # --- util pop portable (algunos builds aceptan timeout_us, otros no)
-    def _try_pop(self, poll_us=20000):
-        try:
-            # Intentar sin argumentos primero (no bloquea)
-            return self.stream.try_pop_buffer()
-        except TypeError:
-            # Fallback: con parámetro de timeout
-            try:
-                return self.stream.try_pop_buffer(poll_us)
-            except:
-                return None
-
-    # --- "nodos" de cámara (get/set) compatibles con tus helpers safe_get/safe_set
-    def get_node_value(self, name, default=None):
-        try:
-            # nombres típicos
-            if name == "PixelFormat":
-                return self.pixfmt
-            if name == "DeviceVendorName":
-                return self.dev.get_string_feature_value("DeviceVendorName")
-            if name == "DeviceModelName":
-                return self.dev.get_string_feature_value("DeviceModelName")
-            if name == "DeviceSerialNumber":
-                return self.dev.get_string_feature_value("DeviceSerialNumber")
-            if name == "AcquisitionMode":
-                return self.dev.get_string_feature_value("AcquisitionMode")
-            if name == "ExposureTime":
-                return self.dev.get_float_feature_value("ExposureTime")
-            if name == "Gain":
-                return self.dev.get_float_feature_value("Gain")
-            if name == "AcquisitionFrameRate":  # Aravis usa "AcquisitionFrameRate"
-                return self.dev.get_float_feature_value("AcquisitionFrameRate")
-            if name == "AcquisitionFrameRateEnable":
-                return self.dev.get_boolean_feature_value("AcquisitionFrameRateEnable")
-            if name == "TriggerMode":
-                return self.dev.get_string_feature_value("TriggerMode")
-            if name in ("BalanceWhiteAuto","WhiteBalanceAuto"):
-                return self.dev.get_string_feature_value(name)
-            if name == "Gamma":
-                return self.dev.get_float_feature_value("Gamma")
-            if name == "GammaEnable":
-                return self.dev.get_boolean_feature_value("GammaEnable")
-        except Exception:
-            pass
-        return default
-
-    def set_node_value(self, name, value):
-        try:
-            if name == "PixelFormat":
-                # intenta escribir al dispositivo si el nodo existe
-                try:
-                    if not self.started:
-                        self.dev.set_string_feature_value("PixelFormat", str(value))
-                    else:
-                        raise RuntimeError("acquisition running")
-                    self.pixfmt = str(value)
-                    return True
-                except Exception as e:
-                    # no se pudo (probablemente en adquisición): guarda preferencia
-                    self.pixfmt = str(value)
-                    print(f"[Aravis set PixelFormat] diferido hasta próximo START ({e})")
-                    return True
-            if name == "ExposureTime":
-                self.dev.set_float_feature_value("ExposureTime", float(value))
-                return True
-            if name == "Gain":
-                self.dev.set_float_feature_value("Gain", float(value))
-                return True
-            if name == "AcquisitionFrameRate":
-                self.dev.set_float_feature_value("AcquisitionFrameRate", float(value))
-                return True
-            if name == "TriggerMode":
-                self.dev.set_string_feature_value("TriggerMode", str(value))
-                return True
-            if name in ("BalanceWhiteAuto","WhiteBalanceAuto"):
-                self.dev.set_string_feature_value(name, str(value))
-                return True
-            if name in ("ExposureAuto","GainAuto"):
-                self.dev.set_string_feature_value(name, str(value)); return True
-            if name in ("Gamma","GammaEnable"):
-                # muchas cámaras tienen estos nodos:
-                if name == "Gamma": self.dev.set_float_feature_value("Gamma", float(value)); return True
-                if name == "GammaEnable": self.dev.set_boolean_feature_value("GammaEnable", bool(value)); return True
-
-        except Exception as e:
-            print(f"[Aravis set {name}] {e}")
-            return False
-        return False
-
-    def open(self):
-        # 1) Descubrir cámaras y crear self.camera / self.dev
-        Aravis.update_device_list()
-        n = Aravis.get_n_devices()
-        if n <= 0:
-            raise RuntimeError("No cameras found (Aravis)")
-        if self.index >= n:
-            raise RuntimeError(f"Index fuera de rango 0..{n-1}")
-        
-        cam_id = Aravis.get_device_id(self.index)
-        self.camera = Aravis.Camera.new(cam_id)
-        if self.camera is None:
-            raise RuntimeError("Aravis.Camera.new() devolvió None")
-        
-        self.dev = self.camera.get_device()
-        if self.dev is None:
-            raise RuntimeError("camera.get_device() devolvió None")
-
-        # 2) (Opcional) tomar privilegio de control si es GigE y el nodo existe
-        try:
-            # No todas las cámaras (USB3) tienen GevCCP. Intentar sólo si existe.
-            try:
-                _ = self.dev.get_string_feature_value("GevCCP")
-                have_gevccp = True
-            except Exception:
-                have_gevccp = False
-
-            if have_gevccp:
-                try:
-                    self.dev.set_string_feature_value("GevCCP", "Control")
-                except Exception:
-                    # valores alternativos según fabricante
-                    for v in ("ExclusiveAccess", "Exclusive", "ControlWithSwitchover", "OpenAccess"):
-                        try:
-                            self.dev.set_string_feature_value("GevCCP", v)
-                            break
-                        except Exception:
-                            pass
-
-                # Intento adicional con la API de privilegios si está disponible
-                try:
-                    GvcpPrivilege = getattr(Aravis, "GvcpPrivilege", None)
-                    if GvcpPrivilege is not None:
-                        self.dev.set_control_channel_privilege(GvcpPrivilege.CONTROL)
-                except Exception:
-                    pass
-
-                # (opcional) reducir heartbeat para liberar rápido si el proceso muere
-                try:
-                    self.dev.set_integer_feature_value("GevHeartbeatTimeout", 2000)
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f"[Aravis] Aviso al fijar privilegio: {e}")
-
-        # 3) Fijar PixelFormat y parámetros de red antes de crear el stream
-        try:
-            # Intenta BayerBG8 por defecto (coherente con conversión OpenCV)
-            self.dev.set_string_feature_value("PixelFormat", "BayerBG8")
-            self.pixfmt = "BayerBG8"
-            self.bayer_code = cv2.COLOR_BayerBG2BGR
-        except Exception:
-            try:
-                # Fallback consistente a RG8
-                self.dev.set_string_feature_value("PixelFormat", "BayerRG8")
-                self.pixfmt = "BayerRG8"
-                self.bayer_code = cv2.COLOR_BayerRG2BGR
-            except Exception:
-                pass
-        # Ajustes GigE recomendados para reducir latencia
-        try:
-            # Intentar usar jumbo frames primero (9000), fallback a 8192
-            try:
-                self.dev.set_integer_feature_value("GevSCPSPacketSize", 9000)
-                print("[GigE] GevSCPSPacketSize = 9000 (jumbo frames)")
-            except Exception:
-                try:
-                    self.dev.set_integer_feature_value("GevSCPSPacketSize", 8192)
-                    print("[GigE] GevSCPSPacketSize = 8192")
-                except Exception:
-                    print("[GigE] No se pudo configurar GevSCPSPacketSize")
-        except Exception:
-            pass
-
-        # Intentar fijar FPS 54 y espaciado de paquetes si los nodos existen
-        try:
-            try:
-                self.dev.set_string_feature_value("TriggerMode", "Off")
-            except Exception:
-                pass
-            for enabler in ("AcquisitionFrameRateEnable",):
-                try:
-                    self.dev.set_integer_feature_value(enabler, 1)
-                except Exception:
-                    try:
-                        self.dev.set_boolean_feature_value(enabler, True)
-                    except Exception:
-                        pass
-            try:
-                self.dev.set_float_feature_value("AcquisitionFrameRate", 54.0)
-            except Exception:
-                try:
-                    self.dev.set_integer_feature_value("AcquisitionFrameRate", 54)
-                except Exception:
-                    pass
-            # Ajustar GevSCPD: 2000 ns si hay pérdida, 0 si no hay pérdida
-            try:
-                self.dev.set_integer_feature_value("GevSCPD", 2000)
-                print("[GigE] GevSCPD = 2000 ns")
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        # 4) Crear stream y preparar buffers
-        self.stream = self.camera.create_stream(None, None)
-        if self.stream is None:
-            raise RuntimeError("create_stream() failed")
-
-        # === APLICAR ROI ANTES DE RESERVAR BUFFERS ===
-        try:
-            def _align(v, m=8):
-                return int(v) // m * m
-            def _even2(v):
-                return (int(v) // 2) * 2
-            h_max = int(self.dev.get_integer_feature_value("HeightMax"))
-            w_max = int(self.dev.get_integer_feature_value("WidthMax"))
-            # Banda por defecto: 30%..82% (ajustable luego desde RUN si se desea)
-            y1 = _even2(_align(h_max * 0.30, 8))
-            y2 = _even2(_align(h_max * 0.82, 8))
-            new_h = _even2(max(_align(y2 - y1, 8), 64))
-            new_w = _align(w_max, 8)
-            self.dev.set_integer_feature_value("OffsetX", 0)
-            self.dev.set_integer_feature_value("OffsetY", int(y1))
-            self.dev.set_integer_feature_value("Width",   int(new_w))
-            self.dev.set_integer_feature_value("Height",  int(new_h))
-            try:
-                import builtins
-                builtins.offsetY = int(y1)
-            except Exception:
-                pass
-            print(f"[ROI/open] Región aplicada: X=0 Y={int(y1)} W={int(new_w)} H={int(new_h)}")
-        except Exception as e:
-            print(f"[ROI/open] No se pudo aplicar ROI en open: {e}")
-
-        # Releer payload tras ROI y reservar buffers del tamaño correcto
-        self.payload = self.camera.get_payload()
-        if not isinstance(self.payload, int) or self.payload <= 0:
-            # fallback si payload no disponible
-            w = int(self.dev.get_integer_feature_value("Width"))
-            h = int(self.dev.get_integer_feature_value("Height"))
-            self.payload = int(w * h)
-
-        for _ in range(self.n_buffers):
-            self.stream.push_buffer(Aravis.Buffer.new_allocate(self.payload))
-
-        # 4) leer dimensiones / formato (best-effort)
-        try:
-            self.width = int(self.dev.get_integer_feature_value("Width"))
-            self.height = int(self.dev.get_integer_feature_value("Height"))
-        except Exception:
-            self.width, self.height = 0, 0
-
-        try:
-            self.pixfmt = self.dev.get_string_feature_value("PixelFormat")
-        except Exception:
-            self.pixfmt = "Unknown"
-
-        return self
-
-    def start(self):
-        if not self.started:
-            # Aplicar ROI por GenICam ANTES de allocar buffers e iniciar
-            try:
-                def align(v, m=8):
-                    return int(v) // m * m
-                def even2(v):
-                    return (int(v) // 2) * 2
-                # Si el usuario ya fijó un ROI (globals), respetarlo; si no, proponer banda media
-                h_max = int(self.dev.get_integer_feature_value("HeightMax"))
-                w_max = int(self.dev.get_integer_feature_value("WidthMax"))
-                y1 = even2(align(h_max * 0.38, 8))  # subir un poco la banda
-                y2 = even2(align(h_max * 0.78, 8))
-                new_h = even2(max(align(y2 - y1, 8), 64))
-                new_w = align(w_max, 8)
-                # Aplicar SIEMPRE el ROI antes de iniciar
-                self.dev.set_integer_feature_value("OffsetX", 0)
-                self.dev.set_integer_feature_value("OffsetY", int(y1))
-                self.dev.set_integer_feature_value("Width",   int(new_w))
-                self.dev.set_integer_feature_value("Height",  int(new_h))
-                try:
-                    # Si por cualquier razón ya estábamos arrancados, parar de forma segura
-                    if self.started:
-                        self.camera.stop_acquisition()
-                        self.started = False
-                except Exception:
-                    pass
-                # Vaciar stream de buffers antiguos y reservar con el nuevo payload
-                try:
-                    self.stream.flush()
-                except Exception:
-                    pass
-                try:
-                    while True:
-                        b = self.stream.pop_buffer(0)
-                        if b is None:
-                            break
-                except Exception:
-                    pass
-                try:
-                    # Actualizar dimensiones y payload reales
-                    self.width  = int(self.dev.get_integer_feature_value("Width"))
-                    self.height = int(self.dev.get_integer_feature_value("Height"))
-                    # Preferir payload reportado por cámara si existe
-                    try:
-                        self.payload = int(self.camera.get_payload())
-                    except Exception:
-                        self.payload = int(self.width * self.height)
-                    from gi.repository import Aravis
-                    for _ in range(self.n_buffers):
-                        self.stream.push_buffer(Aravis.Buffer.new_allocate(self.payload))
-                except Exception:
-                    pass
-                try:
-                    import builtins
-                    builtins.offsetY = int(y1)
-                except Exception:
-                    pass
-                print(f"[ROI/backend] Región aplicada: X=0 Y={int(y1)} W={int(new_w)} H={int(new_h)}")
-            except Exception as e:
-                print(f"[ROI/backend] No se pudo aplicar ROI antes de start: {e}")
-            # Reintentar aplicar PixelFormat recordado antes de iniciar
-            try:
-                # Forzar explícitamente BayerBG8 para coherencia con demosaico
-                self.dev.set_string_feature_value("PixelFormat", "BayerBG8")
-                self.pixfmt = "BayerBG8"
-                self.bayer_code = cv2.COLOR_BayerBG2BGR
-                print("[Aravis] Forzando PixelFormat BayerBG8 (coherente con cámara)")
-            except Exception as e:
-                print(f"[Aravis] Aviso: no pude fijar PixelFormat: {e}")
-            self.camera.start_acquisition()
-            self.started = True
-            # Log del PixelFormat efectivo
-            try:
-                eff = self.dev.get_string_feature_value("PixelFormat")
-            except Exception:
-                eff = self.pixfmt
-            print(f"[Aravis START] PixelFormat efectivo: {eff}")
-
-    def stop(self):
-        if self.started:
-            self.camera.stop_acquisition()
-            self.started = False
-
-    def close(self):
-        try:
-            self.stop()
-        except:
-            ...
-        self.stream = None
-        self.dev = None
-        self.camera = None
-
-    # --- util: estimar bytes GVSP (payload + overhead UDP/IP/Eth aprox) ---
-    def _gvsp_bytes_per_buffer(self, payload_size, pkt_size=8192):
-        overhead_per_pkt = 42  # UDP+IP+Eth aprox
-        n_pkts = (payload_size + pkt_size - 1) // pkt_size
-        return payload_size + n_pkts * overhead_per_pkt
-
-    # --- logging de estadísticas del stream (cada ~1s) ---
-    def _log_stream_stats(self, every_sec=1.0):
-        now = time.time()
-        dt = now - self._stat_last_t
-        if dt < every_sec:
-            return
-        fps = self._stat_frames_acc / dt if dt > 0 else 0.0
-        mbps = (self._stat_bytes_acc * 8) / dt / 1e6
-        resent = missing = completed = failures = underruns = -1
-        try:
-            resent = self.stream.get_n_resent_packets()
-            missing = self.stream.get_n_missing_packets()
-            completed = self.stream.get_n_completed_buffers()
-            failures = self.stream.get_n_failures()
-            underruns = self.stream.get_n_underruns()
-        except Exception:
-            try:
-                stats = getattr(self.stream, 'get_statistics', None)
-                if callable(stats):
-                    _ = stats()
-            except Exception:
-                pass
-        print(f"[NET] FPS={fps:5.1f}  Throughput={mbps:6.1f} Mb/s  resent={resent}  missing={missing}  completed={completed}  fail={failures}  underrun={underruns}")
-        self._stat_last_t = now
-        self._stat_frames_acc = 0
-        self._stat_bytes_acc = 0
-
-    # --- frame BGR listo para YOLO (devuelve (bgr, ts))
-    def get_frame(self, timeout_ms=1000):
-        if not self.started:
-            return None
-
-        # DRENAR COLA: sacar todos los buffers viejos y quedarse solo con el último
-        latest = None
-        drained_count = 0
-        
-        # Intentar drenar la cola sin timeout
-        while drained_count < 10:  # límite de seguridad
-            try:
-                buf = self.stream.try_pop_buffer()  # sin argumentos, no bloquea
-                if buf is None:
-                    break
-                if latest is not None:
-                    # devuelve el anterior al pool
-                    try:
-                        self.stream.push_buffer(latest)
-                    except Exception:
-                        pass
-                latest = buf
-                drained_count += 1
-            except Exception:
-                break
-        
-        # Si no había nada en la cola, esperar un poquito para obtener un frame
-        if latest is None:
-            waited = 0
-            poll_us = 20000
-            max_wait = timeout_ms * 1000
-            while waited < max_wait:
-                try:
-                    latest = self.stream.try_pop_buffer(poll_us)
-                    if latest is not None:
-                        break
-                except Exception:
-                    pass
-                waited += poll_us
-        
-        if latest is None:
-            return None
-        
-        buf = latest
-
-        # Capturar timestamp de la cámara para medición de latencia
-        ts_cam_ns = None
-        try:
-            ts_cam_ns = buf.get_timestamp()
-            # El timestamp de Aravis está en nanoseconds desde inicio del sistema
-            # Guardar el primer timestamp para calcular diferencias relativas
-            if not hasattr(self, '_first_cam_timestamp'):
-                self._first_cam_timestamp = ts_cam_ns
-                self._first_sys_timestamp = time.time_ns()
-        except Exception:
-            pass
-
-        data = buf.get_data()
-        # Descartar buffers con estado no exitoso (incompletos)
-        try:
-            st = buf.get_status()
-            if st != 0:
-                try:
-                    self.stream.push_buffer(buf)
-                except Exception:
-                    pass
-                return None
-        except Exception:
-            pass
-        # No devolver el buffer al stream hasta haber copiado (evita sobrescrituras visuales)
-        # En Jetson la copia es barata a este tamaño
-        if data is None:
-            return None
-
-        npbuf = np.frombuffer(bytes(data), dtype=np.uint8)
-        # Usar dimensiones reales del buffer si están disponibles (evita "bandas" por stride)
-        try:
-            bw = int(buf.get_image_width())
-            bh = int(buf.get_image_height())
-        except Exception:
-            bw, bh = int(self.width), int(self.height)
-        try:
-            bstride = int(buf.get_image_stride())
-        except Exception:
-            bstride = bw
-        total_needed = bstride * bh
-        if npbuf.size < total_needed:
-            try:
-                self.stream.push_buffer(buf)
-            except Exception:
-                pass
-            return None
-        raw_strided = npbuf[:total_needed].reshape((bh, bstride))
-        raw = raw_strided[:, :bw]
-        # Actualizar cache de dimensiones al tamaño real
-        self.width, self.height = bw, bh
-
-        # demosaic según formato conocido (mantenemos tu LUT gamma después)
-        pxf = (self.pixfmt or "").upper()
-        if pxf in ("MONO8",):
-            bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
-        elif pxf in ("BAYERBG8","BAYER_BG8","BAYERBG8","BAYERBG8","BAYERBG8"):
-            bgr = cv2.cvtColor(raw, cv2.COLOR_BayerBG2BGR)
-        elif pxf in ("BAYERRG8","BAYER_RG8"):
-            bgr = cv2.cvtColor(raw, cv2.COLOR_BayerRG2BGR)
-        elif pxf in ("BAYERGB8","BAYER_GB8"):
-            bgr = cv2.cvtColor(raw, cv2.COLOR_BayerGB2BGR)
-        elif pxf in ("BAYERGR8","BAYER_GR8"):
-            bgr = cv2.cvtColor(raw, cv2.COLOR_BayerGR2BGR)
-        else:
-            # fallback a tu código Bayer elegido en la UI
-            # Si no hay PixelFormat claro, usa el seleccionado en UI
-            bgr = cv2.cvtColor(raw, self.bayer_code)
-
-        # Devolver ahora el buffer al pool
-        self.stream.push_buffer(buf)
-
-        # --- Métricas de stream: FPS y throughput estimado ---
-        try:
-            bpp = 1  # BayerRG8/BayerBG8 ~ 1 byte/px
-            payload_size = int(self.width * self.height * bpp)
-            self._stat_frames_acc += 1
-            self._stat_bytes_acc += self._gvsp_bytes_per_buffer(payload_size, pkt_size=8192)
-            self._log_stream_stats(every_sec=1.0)
-        except Exception:
-            pass
-
-        # Calcular latencia end-to-end usando diferencias relativas
-        ts_now_ns = time.time_ns()
-        if ts_cam_ns is not None and hasattr(self, '_first_cam_timestamp'):
-            # Calcular diferencia de tiempo de cámara desde el primer frame
-            cam_diff_ns = ts_cam_ns - self._first_cam_timestamp
-            # Calcular diferencia de tiempo del sistema desde el primer frame
-            sys_diff_ns = ts_now_ns - self._first_sys_timestamp
-            # La latencia es la diferencia entre lo que pasó en el sistema vs en la cámara
-            # Esto nos da el tiempo que el frame tardó en llegar desde la cámara
-            lat_ms = (sys_diff_ns - cam_diff_ns) / 1e6
-            
-            # Solo imprimir cada 30 frames para no saturar logs
-            if hasattr(self, '_frame_count'):
-                self._frame_count += 1
-            else:
-                self._frame_count = 1
-            if self._frame_count % 30 == 0:
-                print(f"[LAT] End2end={lat_ms:.1f}ms (cámara→CPU)")
-        else:
-            lat_ms = None
-
-        return bgr, time.time(), lat_ms
+from camera.aravis_backend import AravisBackend
 
 
 class Prof:
@@ -1507,7 +703,7 @@ def _console_listener():
     - 'on 50 x3' -> 3 pulsos de 50 ms (opcional)
     Cualquier otra cosa: ignora.
     """
-    print("⌨️ Consola lista: escribe 'on' o 'on <ms>' o 'on <ms> x<rep>' para pulso DO0.")
+    log_info("⌨️ Consola lista: escribe 'on' o 'on <ms>' o 'on <ms> x<rep>' para pulso DO0.")
     while not stop_event.is_set():
         try:
             line = input().strip().lower()
@@ -1537,9 +733,9 @@ def _console_listener():
 
         try:
             do0_pulse(ms=ms, repeat=rep, gap_ms=max(30, ms))
-            print(f"⚡ Pulso DO0: {ms} ms x{rep}")
+            log_info(f"⚡ Pulso DO0: {ms} ms x{rep}")
         except Exception as e:
-            print(f"❌ Error pulsando DO0: {e}")
+            log_error(f"❌ Error pulsando DO0: {e}")
 
 
 # global toggles
@@ -1595,48 +791,7 @@ except Exception:
 # IoU = área de intersección / área de unión
 # donde el área de unión es la suma de los dos áreas menos el área de intersección.
 # --------------------------------------------------
-def calculate_iou(box1, box2):
-    """Calcula el Intersection over Union (IoU) entre dos bounding boxes.
-    
-    Parámetros:
-        box1 (list/tuple): Coordenadas [x1, y1, x2, y2] de la primera caja.
-        box2 (list/tuple): Coordenadas [x1, y1, x2, y2] de la segunda caja.
-    
-    Retorna:
-        float: Valor de IoU entre 0.0 y 1.0.
-    """
-    # Desempaquetar coordenadas de la primera caja
-    x1_min, y1_min, x1_max, y1_max = box1  # Asigna las coordenadas mínimas y máximas de box1
-    
-    # Desempaquetar coordenadas de la segunda caja
-    x2_min, y2_min, x2_max, y2_max = box2  # Asigna las coordenadas mínimas y máximas de box2
-    
-    # Calcular los límites de la intersección entre las dos cajas
-    inter_x_min = max(x1_min, x2_min)  # El límite izquierdo es el mayor entre los dos x mínimos
-    inter_y_min = max(y1_min, y2_min)  # El límite superior es el mayor entre los dos y mínimos
-    inter_x_max = min(x1_max, x2_max)  # El límite derecho es el menor entre los dos x máximos
-    inter_y_max = min(y1_max, y2_max)  # El límite inferior es el menor entre los dos y máximos
-    
-    # Verificar si las cajas se intersectan (si no, no hay área de intersección)
-    if inter_x_max <= inter_x_min or inter_y_max <= inter_y_min:
-        # No existe intersección válida, retornamos 0.0
-        return 0.0
-    
-    # Calcular el área de intersección
-    inter_area = (inter_x_max - inter_x_min) * (inter_y_max - inter_y_min)
-    
-    # Calcular el área de la primera caja
-    area1 = (x1_max - x1_min) * (y1_max - y1_min)
-    
-    # Calcular el área de la segunda caja
-    area2 = (x2_max - x2_min) * (y2_max - y2_min)
-    
-    # Calcular el área de unión
-    # Se suma el área de ambas cajas y se resta el área de intersección para no contarla dos veces
-    union_area = area1 + area2 - inter_area
-    
-    # Retornar el IoU, que es la fracción del área de intersección sobre el área de unión
-    return inter_area / union_area
+# calculate_iou movido a vision.ops
 
 
 def find_best_match_for_ghost_id(ghost_box, last_boxes, last_tids, iou_threshold=0.3):
@@ -1659,275 +814,7 @@ def find_best_match_for_ghost_id(ghost_box, last_boxes, last_tids, iou_threshold
 
 
 # ===== YOLO PYTORCH OPTIMIZADO =====
-class YOLOPyTorchCUDA:
-    """YOLO usando PyTorch optimizado para CPU en Jetson Orin"""
-    
-    def __init__(self, model_path: str, input_shape: int = 640):
-        self.model_path = model_path
-        self.input_shape = input_shape
-        self.session = None
-        self.input_name = None
-        self.output_names = None
-        self.class_names = ['can', 'hand', 'bottle']  # Clases del modelo (0=can, 1=hand, 2=bottle)
-        
-        # Configurar PyTorch optimizado
-        self.setup_pytorch_cuda()
-
-# ===== YOLO PYTORCH OPTIMIZADO =====
-class YOLOPyTorchCUDA:
-    """YOLO usando PyTorch optimizado para CPU en Jetson Orin"""
-    
-    def __init__(self, model_path: str, input_shape: int = 640):
-        self.model_path = model_path
-        self.input_shape = input_shape
-        self.session = None
-        self.input_name = None
-        self.output_names = None
-        self.class_names = ['can', 'hand', 'bottle']  # Clases del modelo (0=can, 1=hand, 2=bottle)
-        
-        # Configurar PyTorch optimizado
-        self.setup_pytorch_cuda()
-    
-    def setup_pytorch_cuda(self):
-        """Configura PyTorch optimizado para CUDA/CPU unificado"""
-        global UNIFIED_DEVICE
-        try:
-            # Usar dispositivo unificado
-            if UNIFIED_DEVICE is None:
-                UNIFIED_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            self.device = UNIFIED_DEVICE
-            
-            if torch.cuda.is_available():
-                print(f"✅ Usando CUDA unificado para inferencia YOLO: {torch.cuda.get_device_name(0)}")
-            else:
-                print("✅ Usando CPU optimizado para inferencia YOLO")
-            
-            # Suprimir warnings de Ultralytics
-            import warnings
-            import os
-            warnings.filterwarnings('ignore', category=UserWarning)
-            os.environ['YOLO_VERBOSE'] = 'False'
-            
-            # Cargar modelo con Ultralytics - SOLO INFERENCIA
-            from ultralytics import YOLO
-            
-            # Verificar que el archivo del modelo existe
-            if not os.path.exists(self.model_path):
-                raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}")
-            
-            # Cargar modelo con configuración específica para evitar entrenamiento
-            if self.model_path.endswith('.engine'):
-                print("🚀 Cargando modelo TensorRT para máxima velocidad...")
-            else:
-                print("🤖 Cargando modelo PyTorch...")
-            
-            self.model = YOLO(self.model_path)
-            
-            # Optimizaciones específicas para Jetson
-            if hasattr(self.model, 'model'):
-                # Configurar modelo para inferencia optimizada
-                self.model.model.eval()
-                
-                # Optimizaciones de memoria
-                for param in self.model.model.parameters():
-                    param.requires_grad = False
-                
-                # Configurar para inferencia optimizada
-                torch.backends.cudnn.benchmark = True
-                torch.backends.cudnn.deterministic = False
-            # Para TensorRT/ONNX no llamar a .to() ni .model.eval()
-            if not self.model_path.endswith('.engine'):
-                self.model.to(self.device)
-                try:
-                    self.model.model.eval()
-                except Exception:
-                    pass
-
-            # Preparar función de inferencia unificada
-            self.is_engine = str(self.model_path).lower().endswith('.engine')
-            if self.is_engine:
-                # Para TensorRT, usar predict con parámetros explícitos
-                self.run_predict = lambda img, args: self.model.predict(
-                    source=img,
-                    device=0,
-                    imgsz=args.get('imgsz', 416),
-                    conf=args.get('conf', 0.3),
-                    iou=args.get('iou', 0.45),
-                    agnostic_nms=True,
-                    max_det=args.get('max_det', 10),
-                    verbose=False,
-                    stream=False,
-                    half=True
-                )
-            else:
-                self.run_predict = lambda img, args: self.model.predict(
-                    source=img,
-                    device=self.device,
-                    **args
-                )
-            
-            # Interceptar y deshabilitar entrenamiento
-            original_train = getattr(self.model, 'train', None)
-            original_val = getattr(self.model, 'val', None)
-            
-            def dummy_train(*args, **kwargs):
-                print("⚠️ Entrenamiento interceptado - ignorando")
-                return None
-                
-            def dummy_val(*args, **kwargs):
-                print("⚠️ Validación interceptada - ignorando")
-                return None
-            
-            # Reemplazar métodos de entrenamiento
-            self.model.train = dummy_train
-            self.model.val = dummy_val
-            
-            # Configurar para solo inferencia
-            if hasattr(self.model, 'overrides'):
-                self.model.overrides = {}
-                self.model.overrides['mode'] = 'predict'
-                self.model.overrides['task'] = 'detect'
-            
-            print(f"✅ Modelo Ultralytics cargado: {self.model_path}")
-            print(f"✅ Dispositivo: {self.device}")
-            print(f"✅ Modo: Solo inferencia")
-            
-            # === VERIFICACIÓN CUDA EN MODELO YOLO ===
-            if torch.cuda.is_available():
-                print(f"🚀 YOLO usando CUDA: {torch.cuda.get_device_name(0)}")
-                print(f"🚀 Memoria GPU disponible: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-                print(f"🚀 Memoria GPU usada: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
-            else:
-                print("⚠️ YOLO usando CPU (sin CUDA)")
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ Error cargando modelo: {e}")
-            print("🔄 Ignorando error de dataset y continuando...")
-            
-            # Intentar cargar de todas formas, ignorando errores de dataset
-            try:
-                from ultralytics import YOLO
-                self.model = YOLO(self.model_path)
-                self.model.to(self.device)
-                self.model.model.eval()
-                
-                print(f"✅ Modelo cargado ignorando errores: {self.model_path}")
-                print(f"✅ Dispositivo: {self.device}")
-                return True
-                
-            except Exception as e2:
-                print(f"❌ Error final: {e2}")
-                return False
-    
-    def preprocess_image(self, image: np.ndarray) -> np.ndarray:
-        """Preprocesa la imagen para YOLO usando PyTorch tensors"""
-        try:
-            # Redimensionar usando PyTorch con tamaño optimizado
-            resized = process_image_with_pytorch(
-                image, 
-                operation="resize", 
-                target_size=(YOLO_IMGSZ, YOLO_IMGSZ)
-            )
-            
-            # Convertir a RGB usando PyTorch
-            rgb = process_image_with_pytorch(
-                resized, 
-                operation="cvt_color"
-            )
-            
-            # Normalizar
-            normalized = rgb.astype(np.float32) / 255.0
-            
-            # Transponer para CHW
-            transposed = np.transpose(normalized, (2, 0, 1))
-            
-            # Agregar dimensión de batch
-            batched = np.expand_dims(transposed, axis=0)
-            
-            return batched
-            
-        except Exception as e:
-            print(f"❌ Error preprocesando imagen: {e}")
-            return None
-    
-    def postprocess_output(self, outputs: List[np.ndarray], conf_threshold: float = 0.5) -> List[Dict]:
-        """Postprocesa las salidas de YOLO"""
-        try:
-            detections = []
-            
-            # Procesar cada salida
-            for output in outputs:
-                # Obtener dimensiones
-                batch_size, num_detections, num_attributes = output.shape
-                
-                # Procesar cada detección
-                for i in range(num_detections):
-                    # Obtener confianza
-                    confidence = output[0, i, 4]
-                    
-                    if confidence > conf_threshold:
-                        # Obtener coordenadas
-                        x_center = output[0, i, 0]
-                        y_center = output[0, i, 1]
-                        width = output[0, i, 2]
-                        height = output[0, i, 3]
-                        
-                        # Obtener clase
-                        class_scores = output[0, i, 5:]
-                        class_id = np.argmax(class_scores)
-                        class_confidence = class_scores[class_id]
-                        
-                        # Calcular coordenadas de bounding box
-                        x1 = int(x_center - width / 2)
-                        y1 = int(y_center - height / 2)
-                        x2 = int(x_center + width / 2)
-                        y2 = int(y_center + height / 2)
-                        
-                        detections.append({
-                            'bbox': [x1, y1, x2, y2],
-                            'confidence': float(confidence),
-                            'class_id': int(class_id),
-                            'class_name': self.class_names[class_id] if class_id < len(self.class_names) else 'unknown',
-                            'class_confidence': float(class_confidence)
-                        })
-            
-            return detections
-            
-        except Exception as e:
-            print(f"❌ Error postprocesando salidas: {e}")
-            return []
-    
-    def predict(self, image: np.ndarray, conf_threshold: float = 0.5, yolo_args: Dict = None) -> List[Dict]:
-        """Realiza predicción con Ultralytics PyTorch optimizado"""
-        try:
-            # Ejecutar inferencia con PyTorch
-            with torch.no_grad():
-                results = self.model(image, conf=conf_threshold, verbose=False)
-                
-                detections = []
-                for result in results:
-                    boxes = result.boxes
-                    if boxes is not None:
-                        for box in boxes:
-                            # Obtener coordenadas
-                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                            confidence = box.conf[0].cpu().numpy()
-                            class_id = int(box.cls[0].cpu().numpy())
-                            
-                            detections.append({
-                                'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                                'confidence': float(confidence),
-                                'class_id': class_id,
-                                'class_name': self.class_names[class_id] if class_id < len(self.class_names) else 'unknown'
-                            })
-                
-                return detections
-            
-        except Exception as e:
-            print(f"❌ Error en predicción: {e}")
-            return []
+from vision.yolo_wrapper import YOLOPyTorchCUDA
 
 # Importar YOLO una sola vez al inicio (COMENTADO: Reemplazado por ONNX Runtime)
 # try:
@@ -1952,19 +839,10 @@ YOLO_AVAILABLE = True  # ONNX Runtime siempre está disponible
 #     print(f"[YOLO safe_globals] no aplicado: {_e}")
 
 
-def load_yaml_config(config_path="config_yolo.yaml"):
-    """Carga configuración desde archivo YAML"""
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
-        print(f"✅ Configuración cargada desde {config_path}")
-        return config
-    except FileNotFoundError:
-        print(f"⚠️ Archivo {config_path} no encontrado, usando configuración por defecto")
-        return {}
-    except Exception as e:
-        print(f"❌ Error cargando {config_path}: {e}")
-        return {}
+from core.config import load_yaml_config
+from core.logging import get_logger, log_info, log_warning, log_error
+from core.context import AppContext
+from ui.panel import crear_panel_control_stviewer, detectar_clic_panel_control
 
 
 # Cargar configuración YAML
@@ -2095,9 +973,10 @@ ROI_X1 = None
 ROI_X2 = None
 
 # ============ Estado global ============
-cap_queue = queue.Queue(maxsize=MAX_QUEUE)  # frames crudos desde cámara
-infer_queue = queue.Queue(maxsize=MAX_QUEUE)  # resultados detección/tracking para UI/Clasificador
-evt_queue = queue.Queue()
+APP_CTX = AppContext()
+APP_CTX.cap_queue = queue.Queue(maxsize=MAX_QUEUE)  # frames crudos desde cámara
+APP_CTX.infer_queue = queue.Queue(maxsize=MAX_QUEUE)  # resultados detección/tracking para UI/Clasificador
+APP_CTX.evt_queue = queue.Queue()
 
 stop_event = threading.Event()  # Para detener el pipeline
 
@@ -2421,212 +1300,10 @@ def set_(nm, name, value):
         return False
 
 
-def crear_panel_control_stviewer(img_width, img_height):
-    """Crea el panel de control estilo StViewer (copiado del original)"""
-    # Asegurar altura mínima para dibujar todos los controles (incluyendo clasificador + tracks activos)
-    min_h = 900
-    ph = max(int(img_height), min_h)
-    panel = np.full((ph, 350, 3), (40, 40, 40), dtype=np.uint8)
-    
-    # Título con gradiente
-    cv2.rectangle(panel, (0, 0), (350, 60), (64, 64, 64), -1)
-    cv2.putText(panel, "YOLO + GenTL", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-    
-    # Estado de la cámara
-    y_offset = 80
-    cv2.rectangle(panel, (20, y_offset+10), (330, y_offset+40), (64, 64, 64), -1)
-    cv2.rectangle(panel, (20, y_offset+10), (330, y_offset+40), (255, 0, 0), 2)
-    cv2.putText(panel, "DETENIDA", (30, y_offset+30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-    
-    # Botones RUN/STOP
-    y_offset = 150
-    cv2.rectangle(panel, (20, y_offset+10), (160, y_offset+40), (0, 150, 0), -1)
-    cv2.rectangle(panel, (20, y_offset+10), (160, y_offset+40), (255, 255, 255), 2)
-    cv2.putText(panel, "RUN", (60, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    
-    cv2.rectangle(panel, (170, y_offset+10), (310, y_offset+40), (0, 0, 150), -1)
-    cv2.rectangle(panel, (170, y_offset+10), (310, y_offset+40), (255, 255, 255), 2)
-    cv2.putText(panel, "STOP", (200, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    
-    # Botón GRABAR (debajo de RUN/STOP)
-    y_offset = 190
-    cv2.rectangle(panel, (20, y_offset+10), (310, y_offset+40), (0, 0, 255), -1)
-    cv2.rectangle(panel, (20, y_offset+10), (310, y_offset+40), (255, 255, 255), 2)
-    cv2.putText(panel, "GRABAR 60s", (90, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    
-    # Mini-checklist de configuración optimizada
-    y_offset = 200
-    cv2.putText(panel, "CONFIG OPTIMIZADA:", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
-    cv2.putText(panel, "12 FPS | 5ms Expo | 24dB Gain", (20, y_offset+20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
-    cv2.putText(panel, "Conf: 0.30 | IOU: 0.45 | Track: 90", (20, y_offset+35), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
-    
-    # Botones AWB/AUTO CAL
-    y_offset = 220
-    cv2.rectangle(panel, (20, y_offset+10), (160, y_offset+40), (100, 100, 0), -1)
-    cv2.rectangle(panel, (20, y_offset+10), (160, y_offset+40), (255, 255, 255), 2)
-    cv2.putText(panel, "AWB ONCE", (30, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-    
-    cv2.rectangle(panel, (170, y_offset+10), (310, y_offset+40), (0, 100, 100), -1)
-    cv2.rectangle(panel, (170, y_offset+10), (310, y_offset+40), (255, 255, 255), 2)
-    cv2.putText(panel, "AUTO CAL", (180, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-    
-    # Slider Gamma
-    y_offset = 280
-    cv2.putText(panel, "Gamma:", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    cv2.rectangle(panel, (20, y_offset+10), (310, y_offset+35), (64, 64, 64), -1)
-    cv2.rectangle(panel, (20, y_offset+10), (310, y_offset+35), (128, 128, 128), 2)
-    
-    # Patrones Bayer
-    y_offset = 340
-    cv2.putText(panel, "Bayer:", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    patrones = [("BG", 20), ("RG", 90), ("GR", 160), ("GB", 230)]
-    for patron, x in patrones:
-        cv2.rectangle(panel, (x, y_offset+10), (x+60, y_offset+35), (80, 80, 80), -1)
-        cv2.rectangle(panel, (x, y_offset+10), (x+60, y_offset+35), (255, 255, 255), 2)
-        cv2.putText(panel, patron, (x+20, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    
-    # Métricas YOLO
-    y_offset = 400
-    cv2.putText(panel, "YOLO Stats:", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-    # Mostrar información de dispositivos
-    device_info = "PyTorch: CPU | OpenCV: CPU"
-    cv2.putText(panel, f"Devices: {device_info}", (20, y_offset+25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-    cv2.putText(panel, "FPS: 0.0", (20, y_offset+45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    cv2.putText(panel, "Tracks: 0", (20, y_offset+65), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    cv2.putText(panel, "Detections: 0", (20, y_offset+85), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    
-    # Controles del Clasificador
-    y_offset = 500
-    cv2.putText(panel, "CLASIFICADOR:", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 165, 0), 1)
-    
-    # Barra de confianza para clasificación
-    cv2.putText(panel, f"Confianza: {CLF_CONF_THRESHOLD:.1f}", (20, y_offset+25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    cv2.rectangle(panel, (20, y_offset+30), (310, y_offset+50), (64, 64, 64), -1)
-    cv2.rectangle(panel, (20, y_offset+30), (310, y_offset+50), (128, 128, 128), 2)
-    # Barra de progreso de confianza
-    conf_width = int((CLF_CONF_THRESHOLD - 0.5) / 0.5 * 290)  # 0.5-1.0 -> 0-290px
-    conf_width = max(0, min(290, conf_width))
-    cv2.rectangle(panel, (20, y_offset+30), (20+conf_width, y_offset+50), (255, 165, 0), -1)
-    
-    # Botones de ajuste de confianza
-    cv2.rectangle(panel, (20, y_offset+55), (80, y_offset+75), (100, 100, 100), -1)
-    cv2.rectangle(panel, (20, y_offset+55), (80, y_offset+75), (255, 255, 255), 2)
-    cv2.putText(panel, "-0.1", (25, y_offset+70), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    
-    cv2.rectangle(panel, (90, y_offset+55), (150, y_offset+75), (100, 100, 100), -1)
-    cv2.rectangle(panel, (90, y_offset+55), (150, y_offset+75), (255, 255, 255), 2)
-    cv2.putText(panel, "+0.1", (95, y_offset+70), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    
-    # Modo conservador
-    mode_color = (0, 255, 0) if CLF_MODE_CONSERVATIVE else (255, 0, 0)
-    cv2.rectangle(panel, (160, y_offset+55), (310, y_offset+75), mode_color, -1)
-    cv2.rectangle(panel, (160, y_offset+55), (310, y_offset+75), (255, 255, 255), 2)
-    mode_text = "CONSERVADOR" if CLF_MODE_CONSERVATIVE else "NORMAL"
-    cv2.putText(panel, mode_text, (170, y_offset+70), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    
-    # Estadísticas del clasificador
-    y_offset = 580
-    cv2.putText(panel, "Clasificadas: 0", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    cv2.putText(panel, "Buenas: 0", (20, y_offset+25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-    cv2.putText(panel, "Malas: 0", (20, y_offset+45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
-    
-    # Botón Config
-    y_offset = 640
-    cv2.rectangle(panel, (20, y_offset+10), (160, y_offset+40), (100, 100, 100), -1)
-    cv2.rectangle(panel, (20, y_offset+10), (160, y_offset+40), (255, 255, 255), 2)
-    cv2.putText(panel, "CONFIG", (30, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-    
-    # Botón Info (derecha)
-    cv2.rectangle(panel, (170, y_offset+10), (310, y_offset+40), (0, 100, 150), -1)
-    cv2.rectangle(panel, (170, y_offset+10), (310, y_offset+40), (255, 255, 255), 2)
-    cv2.putText(panel, "INFO", (200, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-    
-    # Botón Salir (derecha)
-    y_offset = 710
-    cv2.rectangle(panel, (170, y_offset+10), (310, y_offset+40), (100, 0, 0), -1)
-    cv2.rectangle(panel, (170, y_offset+10), (310, y_offset+40), (255, 255, 255), 2)
-    cv2.putText(panel, "SALIR", (200, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-    
-    return panel
+# crear_panel_control_stviewer movido a ui.panel
 
 
-def detectar_clic_panel_control(x, y, panel_offset_x, img_height):
-    """Detecta clics en el panel de control lateral usando offset explícito"""
-    panel_x_click = x - panel_offset_x
-    panel_y_click = y
-    
-    # Debug: Log de todos los clics en el panel
-    print(f" Clic en panel: x={panel_x_click}, y={panel_y_click}")
-    
-    if panel_x_click < 0 or panel_x_click >= PANEL_WIDTH or panel_y_click < 0 or panel_y_click >= img_height:
-        return None
-    
-    # Botón RUN
-    if 20 <= panel_x_click <= 160 and 160 <= panel_y_click <= 195:
-        return "RUN"
-    # Botón STOP
-    elif 170 <= panel_x_click <= 310 and 160 <= panel_y_click <= 195:
-        return "STOP"
-    # Botón GRABAR 60s (debajo de RUN/STOP)
-    elif 20 <= panel_x_click <= 310 and 200 <= panel_y_click <= 240:
-        print(" Botón GRABAR 60s detectado!")
-        return "RECORD_60S"
-    # Botón AWB ONCE
-    elif 20 <= panel_x_click <= 160 and 230 <= panel_y_click <= 260:
-        return "AWB_ONCE"
-    # Botón AUTO CAL
-    elif 170 <= panel_x_click <= 310 and 230 <= panel_y_click <= 260:
-        return "AUTO_CAL"
-    # Slider Gamma - área más amplia para facilitar el clic
-    elif 20 <= panel_x_click <= 310 and 290 <= panel_y_click <= 325:
-        # Calcular valor de gamma basado en la posición X (rango más amplio 0.3–1.5)
-        gamma_value = 0.3 + (panel_x_click - 20) * (1.5 - 0.3) / 290
-        # Redondear a 2 decimales para evitar valores muy específicos
-        gamma_value = round(gamma_value, 2)
-        gamma_value = max(0.3, min(1.5, gamma_value))  # Limitar entre 0.3 y 1.5
-        return f"GAMMA_{gamma_value:.2f}"
-    # Patrones Bayer - área más amplia para facilitar el clic
-    elif 20 <= panel_x_click <= 80 and 350 <= panel_y_click <= 385:
-        return "BAYER_BG"
-    elif 90 <= panel_x_click <= 150 and 350 <= panel_y_click <= 385:
-        return "BAYER_RG"
-    elif 160 <= panel_x_click <= 220 and 350 <= panel_y_click <= 385:
-        return "BAYER_GR"
-    elif 230 <= panel_x_click <= 290 and 350 <= panel_y_click <= 385:
-        return "BAYER_GB"
-    # Controles del Clasificador
-    # Botón -0.1 confianza
-    elif 20 <= panel_x_click <= 80 and 555 <= panel_y_click <= 575:
-        return "CLF_CONF_DOWN"
-    # Botón +0.1 confianza
-    elif 90 <= panel_x_click <= 150 and 555 <= panel_y_click <= 575:
-        return "CLF_CONF_UP"
-    # Botón modo conservador/normal
-    elif 160 <= panel_x_click <= 310 and 555 <= panel_y_click <= 575:
-        return "CLF_MODE_TOGGLE"
-    
-    # Botón CONFIG
-    elif 20 <= panel_x_click <= 160 and 650 <= panel_y_click <= 680:
-        return "CONFIG"
-    # Botón INFO (derecha)
-    elif 170 <= panel_x_click <= 310 and 650 <= panel_y_click <= 680:
-        return "INFO"
-    # Botón SALIR (derecha)
-    elif 170 <= panel_x_click <= 310 and 720 <= panel_y_click <= 750:
-        return "EXIT"
-    
-    # Controles del Clasificador
-    # Botón -0.1 confianza
-    elif 20 <= panel_x_click <= 80 and 555 <= panel_y_click <= 575:
-        return "CLF_CONF_DOWN"
-    # Botón +0.1 confianza
-    elif 90 <= panel_x_click <= 150 and 555 <= panel_y_click <= 575:
-        return "CLF_CONF_UP"
-    # Botón modo conservador/normal
-    elif 160 <= panel_x_click <= 310 and 555 <= panel_y_click <= 575:
-        return "CLF_MODE_TOGGLE"
-    
-    return None
+# detectar_clic_panel_control movido a ui.panel
 
 
 def actualizar_panel_control(panel, metricas, estado_camara, img_width, img_height, gamma_actual=0.8, patron_actual="BG", yolo_stats=None, cam=None):
@@ -2754,7 +1431,7 @@ def handle_mouse_click(event, x, y, flags, param):
         panel_h_effective = max(current_img_h, 900)
         accion = detectar_clic_panel_control(x, y, panel_offset_x, panel_h_effective)
         if accion:
-            evt_queue.put(accion)
+            APP_CTX.evt_queue.put(accion)
             
             if accion == "RUN":
                 print("🚀 Botón RUN presionado - Iniciando cámara...")
@@ -3623,12 +2300,12 @@ def yolo_inference_thread():
         )
         
         try:
-            infer_queue.put_nowait(infer)  # sin timeout para mejor rendimiento
+            APP_CTX.infer_queue.put_nowait(infer)  # sin timeout para mejor rendimiento
         except queue.Full:
             # Si la cola está llena, limpiar y volver a intentar
             try:
-                infer_queue.get_nowait()  # Limpiar cola
-                infer_queue.put_nowait(infer)
+                APP_CTX.infer_queue.get_nowait()  # Limpiar cola
+                APP_CTX.infer_queue.put_nowait(infer)
             except queue.Empty:
                 pass
     
@@ -3649,7 +2326,7 @@ def apply_yolo_overlay(img, yolo_stats=None, frame_num=None, camera=None):
     # Consumir todo lo disponible para quedarse con el más reciente
     try:
         while True:
-            infer = infer_queue.get_nowait()
+            infer = APP_CTX.infer_queue.get_nowait()
             last_infer = infer
             last_draw_ts = time.time()
     except queue.Empty:
@@ -3941,7 +2618,7 @@ def main():
     acquisition_running = False  # como estado inicial (tu UI arranca en STOP)
     cam = cam_like  # para que show_config_window/show_info_window usen backend
     privilege = "Control"  # ficticio para mantener el mismo flujo de logs
-    print(f"🔑 Cámara abierta con privilegio: {privilege}")
+    log_info(f"🔑 Cámara abierta con privilegio: {privilege}")
     
     # Dump inicial de parámetros de cámara
     dump_cam(cam)
@@ -3961,13 +2638,13 @@ def main():
         if "GevCurrentIPAddress" in cam:
             ip_int = int(cam.get_node("GevCurrentIPAddress").value)
             ip_str = ".".join(str((ip_int >> (8*i)) & 0xff) for i in [3,2,1,0])
-            print(f"📡 IP cámara (GenICam): {ip_str}")
+            log_info(f"📡 IP cámara (GenICam): {ip_str}")
     except Exception:
         pass
     
     # Si abriste en ReadOnly, NO intentes escribir nodos
     if privilege == "ReadOnly":
-        print("ℹ️ Cámara abierta en ReadOnly → omito la escritura de nodos (PixelFormat, FPS, etc.).")
+        log_info("ℹ️ Cámara abierta en ReadOnly → omito la escritura de nodos (PixelFormat, FPS, etc.).")
     else:
         print("⚙️ Config cámara:")
         safe_set(cam, 'PixelFormat', PIXEL_FORMAT)
@@ -4013,7 +2690,7 @@ def main():
     # En modo headless, iniciar automáticamente la adquisición (equivalente a pulsar RUN)
     if HEADLESS:
         try:
-            evt_queue.put("RUN")
+            APP_CTX.evt_queue.put("RUN")
         except Exception:
             pass
     
@@ -4125,7 +2802,7 @@ def main():
             # Procesar botones
             # Dentro del while True:
             try:
-                accion = evt_queue.get_nowait()
+                accion = APP_CTX.evt_queue.get_nowait()
             except queue.Empty:
                 accion = None
 
@@ -4216,10 +2893,10 @@ def main():
                 yolo_running = False
                 
                 # Vaciar colas
-                with cap_queue.mutex:
-                    cap_queue.queue.clear()
-                with infer_queue.mutex:
-                    infer_queue.queue.clear()
+                with APP_CTX.cap_queue.mutex:
+                    APP_CTX.cap_queue.queue.clear()
+                with APP_CTX.infer_queue.mutex:
+                    APP_CTX.infer_queue.queue.clear()
                 
                 button_clicked = None
                 print("✅ Cámara y YOLO detenidos")
