@@ -21,17 +21,17 @@ from ui.window import create_main_window, show_frame_with_panel, show_black_with
 from vision.image_utils import apply_gamma_from_state
 from core.recording import Recorder
 
-# Constantes de configuración YOLO (antes en PruebaAravis)
+# Constantes de configuración YOLO
 PROCESS_EVERY = 1
 MISS_HOLD = 10
 RESULT_TTL_S = 0.05
-YOLO_CONF = 0.1  # Umbral más bajo para detectar más objetos
+YOLO_CONF = 0.1  # Se puede sobrescribir por YAML
 YOLO_IOU = 0.5
-YOLO_WEIGHTS = "yolov8n.pt"
+YOLO_WEIGHTS = "yolov8n.pt"  # Se sobrescribe por YAML
 YOLO_IMGSZ = 640
 CLF_MODEL_PATH = "models/classifier.pth"
 
-# Estado global para tracking (antes en PruebaAravis)
+# Estado global para tracking
 bbox_ema = {}
 histories = {}
 last_seen = {}
@@ -166,8 +166,13 @@ class App:
         
         MISS_HOLD = 4  # Mantener detecciones 4 frames sin verlas
         RESULT_TTL_S = 0.05  # TTL más corto para objetos rápidos
-        YOLO_CONF = 0.4  # Confianza algo más alta para evitar duplicados
-        YOLO_IOU = 0.7   # IOU más alto para suprimir cajas solapadas
+        # Cargar umbrales desde YAML si existen, si no usar defaults optimizados
+        try:
+            yolo_cfg = (self.context.config or {}).get('yolo', {})
+        except Exception:
+            yolo_cfg = {}
+        YOLO_CONF = float(yolo_cfg.get('confidence_threshold', 0.4))
+        YOLO_IOU = float(yolo_cfg.get('iou_threshold', 0.7))
         
         log_info(f"✅ Optimizaciones aplicadas:")
         log_info(f"   - Procesa 1 de cada {PROCESS_EVERY} frames")
@@ -222,22 +227,40 @@ class App:
             log_warning("⚠️ HILO YOLO usando CPU (sin CUDA)")
         
         try:
+            # Aplicar configuración YAML para modelo/imagen
+            try:
+                yolo_cfg = (self.context.config or {}).get('yolo', {})
+            except Exception:
+                yolo_cfg = {}
+            weights_path = str(yolo_cfg.get('model_path') or yolo_cfg.get('model') or YOLO_WEIGHTS)
+            imgsz_cfg = yolo_cfg.get('image_size', YOLO_IMGSZ)
+            if isinstance(imgsz_cfg, (list, tuple)) and len(imgsz_cfg) > 0:
+                imgsz_val = int(imgsz_cfg[0])
+            else:
+                imgsz_val = int(imgsz_cfg)
+
             # Crear modelo PyTorch optimizado
-            self.yolo_model = YOLOPyTorchCUDA(YOLO_WEIGHTS, YOLO_IMGSZ)
-            log_info(f"✅ Modelo PyTorch cargado: {YOLO_WEIGHTS}")
+            self.yolo_model = YOLOPyTorchCUDA(weights_path, imgsz_val)
+            log_info(f"✅ Modelo PyTorch cargado: {weights_path} (imgsz={imgsz_val})")
             
             # Aplicar optimizaciones específicas del modelo
             if hasattr(self.yolo_model, 'model') and hasattr(self.yolo_model.model, 'eval'):
                 self.yolo_model.model.eval()  # Modo evaluación para mejor rendimiento
                 log_info("✅ Modelo configurado en modo evaluación")
             
-            # Configurar clases del modelo
-            MODEL_NAMES = {0: 'can', 1: 'hand', 2: 'can'}  # Clases del modelo
-            KEEP_IDX = {0, 1, 2}  # Permitir todas las clases detectadas
-            KEEP_ALL = True
-            log_info(f"✅ Clases del modelo: {MODEL_NAMES}")
-            log_info(f"✅ Clases permitidas: {KEEP_IDX}")
-            log_info(f"✅ Filtro de clases: {'TODAS' if KEEP_ALL else 'FILTRADO'}")
+            # Configurar clases del modelo desde YAML si existen
+            try:
+                class_list = list(yolo_cfg.get('classes', []))
+            except Exception:
+                class_list = []
+            if class_list:
+                MODEL_NAMES = {i: name for i, name in enumerate(class_list)}
+                KEEP_IDX = set(range(len(class_list)))
+                log_info(f"✅ Clases del modelo (YAML): {MODEL_NAMES}")
+            else:
+                MODEL_NAMES = {0: 'can', 1: 'hand'}
+                KEEP_IDX = {0, 1}
+                log_info(f"ℹ️ Clases por defecto: {MODEL_NAMES}")
             
         except Exception as e:
             log_error(f"❌ Error cargando modelo YOLO: {e}")
@@ -310,7 +333,7 @@ class App:
     def _start_threads(self):
         """Inicia hilos de procesamiento."""
         try:
-            # Hilo YOLO reactivado - ahora lee desde builtins.latest_frame como PruebaAravis
+            # Hilo YOLO reactivado - ahora lee desde builtins.latest_frame
             t = threading.Thread(target=self._yolo_inference_thread, daemon=True)
             t.start()
             log_info("🧵 Hilo de inferencia YOLO modular iniciado")
@@ -320,7 +343,7 @@ class App:
         # Aquí podría iniciarse hilo de captura si es necesario en el futuro
         
     def _yolo_inference_thread(self):
-        """Hilo de inferencia YOLO modular (replicando exactamente PruebaAravis.py)."""
+        """Hilo de inferencia YOLO modular."""
         import builtins
         global frame_count
         
@@ -328,7 +351,7 @@ class App:
         
         while True:
             try:
-                # Leer frame más reciente desde builtins (como en PruebaAravis)
+                # Leer frame más reciente desde builtins
                 if not hasattr(builtins, 'latest_frame') or builtins.latest_frame is None:
                     time.sleep(0.01)
                     continue
@@ -446,12 +469,12 @@ class App:
         
         if event == cv2.EVENT_LBUTTONDOWN:
             try:
-                # Debug de clics (como en PruebaAravis)
+                # Debug de clics 
                 panel_offset_x = getattr(builtins, 'panel_offset_x', 0)
                 current_img_h = getattr(builtins, 'current_img_h', 720)
                 log_info(f"[click] x={x}, y={y}, panel_x={x - panel_offset_x}, panel_y={y}")
                 
-                # Detectar clic en panel usando dimensiones actuales (como en PruebaAravis)
+                # Detectar clic en panel usando dimensiones actuales
                 panel_h_effective = max(current_img_h, 900)
                 accion = detectar_clic_panel_control(x, y, panel_offset_x, panel_h_effective)
                 log_info(f"🔍 Detección de clic: panel_offset_x={panel_offset_x}, panel_h_effective={panel_h_effective}, accion={accion}")
@@ -460,7 +483,7 @@ class App:
                     log_info(f"📤 Enviando acción a cola: {accion}")
                     self.context.evt_queue.put(accion)
                     
-                    # Log de acciones (como en PruebaAravis)
+                    # Log de acciones
                     if accion == "RUN":
                         log_info("🚀 Botón RUN presionado - Iniciando cámara...")
                     elif accion == "STOP":
@@ -486,7 +509,7 @@ class App:
                 log_warning(f"⚠️ Error procesando clic: {e}")
         
     def _run_main_loop(self):
-        """Ejecuta el bucle principal replicando exactamente la lógica de PruebaAravis.py."""
+        """Ejecuta el bucle principal."""
         import os
         import time
         import cv2
@@ -496,7 +519,7 @@ class App:
         headless = os.environ.get("HEADLESS", "0") == "1"
         win_name = "Calippo"
         
-        # Variables del bucle principal (como en PruebaAravis)
+        # Variables del bucle principal
         f = 0
         t0 = time.time()
         acquisition_running = False
@@ -566,7 +589,7 @@ class App:
                     # EXIT se maneja en handler RUN/STOP; aquí solo seguimos
                     accion = None
                 
-                # Bucle principal de captura y visualización (replicando PruebaAravis)
+                # Bucle principal de captura y visualización
                 if acquisition_running:
                     try:
                         # Obtener frame de la cámara
@@ -590,7 +613,7 @@ class App:
                         # Aplicar gamma desde utilidades
                         img_bgr = apply_gamma_from_state(img_bgr, self.gamma_actual)
                         
-                        # Actualizar dimensiones UI para detección de clics (como en PruebaAravis)
+                        # Actualizar dimensiones UI para detección de clics
                         try:
                             h, w = img_bgr.shape[:2]
                             builtins.current_img_w = w
@@ -599,7 +622,7 @@ class App:
                         except Exception:
                             pass
                         
-                        # Publicar frame para hilo YOLO (como en PruebaAravis)
+                        # Publicar frame para hilo YOLO
                         try:
                             builtins.latest_frame = img_bgr.copy()
                             fid = int(time.time()*1000) & 0x7FFFFFFF
@@ -612,7 +635,7 @@ class App:
                         from ui.indicators import draw_all_indicators
                         img_bgr = draw_all_indicators(img_bgr, self)
                         
-                        # Aplicar overlay YOLO (modular, sin PruebaAravis)
+                        # Aplicar overlay YOLO (modular)
                         try:
                             out = apply_yolo_overlay(
                                 img_bgr,
@@ -638,7 +661,7 @@ class App:
                         log_warning(f"⚠️ Error en captura: {e}")
                         time.sleep(0.005)
                 else:
-                    # Mostrar pantalla negra cuando está parado (como en PruebaAravis)
+                    # Mostrar pantalla negra cuando está parado
                     if not headless:
                         try:
                             # Mostrar pantalla negra con panel usando el módulo dedicado

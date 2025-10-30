@@ -214,119 +214,123 @@ def handle_action(app, action):
 
 
 def _show_info_window(camera):
-    """Ventana INFO en hilo dedicado con refresco continuo (no bloquea la UI)."""
+    """Ventana INFO modal (main thread) para compatibilidad GTK/X en Jetson."""
     import cv2
     import numpy as np
     from core.logging import log_info, log_warning
 
-    global _info_open, _info_thread
+    global _info_open
     if _info_open:
         return
     _info_open = True
-    
-    def _run():
-        global _info_open
+
+    def safe_get(cam, name, default=None):
         try:
-            def safe_get(cam, name, default=None):
+            if hasattr(cam, 'get_node_value'):
+                return cam.get_node_value(name, default)
+            return default
+        except Exception:
+            return default
+
+    win = "Info"
+    try:
+        cv2.namedWindow(win, cv2.WINDOW_AUTOSIZE)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        log_info("ℹ️ Ventana INFO abierta")
+        t0 = time.time()
+        ever_visible = False
+        invisible_count = 0
+
+        img0 = np.full((520, 760, 3), 16, dtype=np.uint8)
+        cv2.putText(img0, "Cargando informacion...", (16, 40), font, 0.8, (0,255,255), 2)
+        cv2.imshow(win, img0)
+        cv2.waitKey(10)
+
+        while True:
+            img = np.full((520, 760, 3), 16, dtype=np.uint8)
+            lines = ["INFORMACION (solo lectura)"]
+            def add_line(label, getter):
                 try:
-                    if hasattr(cam, 'get_node_value'):
-                        return cam.get_node_value(name, default)
-                    return default
-                except Exception:
-                    return default
-
-            win = "Info"
-            cv2.namedWindow(win, cv2.WINDOW_AUTOSIZE)
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            log_info("ℹ️ Ventana INFO abierta")
-            t0 = time.time()
-            
-            # Render inicial antes del loop (evita ver todo negro si el primer waitKey tarda)
-            try:
-                img0 = np.full((520, 760, 3), 16, dtype=np.uint8)
-                cv2.putText(img0, "Cargando informacion...", (16, 40), font, 0.8, (0,255,255), 2)
-                cv2.imshow(win, img0)
-                cv2.waitKey(10)
-            except Exception:
-                pass
-            while _info_open:
-                # Fondo gris para mejor contraste
-                img = np.full((520, 760, 3), 16, dtype=np.uint8)
-                # Construir líneas de manera tolerante a fallos y con logs
-                lines = ["INFORMACION (solo lectura)"]
-                def add_line(label, getter):
+                    val = getter()
+                    if val is None:
+                        val = 'N/A'
+                    lines.append(f"{label}: {val}")
+                except Exception as e:
+                    lines.append(f"{label}: N/A")
                     try:
-                        val = getter()
-                        if val is None:
-                            val = 'N/A'
-                        lines.append(f"{label}: {val}")
-                    except Exception as e:
-                        lines.append(f"{label}: N/A")
-                        try:
-                            from core.logging import log_warning
-                            log_warning(f"INFO lector {label}: {e}")
-                        except Exception:
-                            pass
+                        from core.logging import log_warning as _lw
+                        _lw(f"INFO lector {label}: {e}")
+                    except Exception:
+                        pass
 
-                add_line("Vendor", lambda: safe_get(camera, 'DeviceVendorName', 'N/A'))
-                add_line("Model", lambda: safe_get(camera, 'DeviceModelName', 'N/A'))
-                add_line("Serial", lambda: safe_get(camera, 'DeviceSerialNumber', 'N/A'))
-                add_line("PixelFormat", lambda: safe_get(camera, 'PixelFormat', 'N/A'))
-                add_line("TriggerMode", lambda: safe_get(camera, 'TriggerMode', 'N/A'))
-                # ENUMs: devolver como texto si vienen None
-                add_line("ExposureMode", lambda: (safe_get(camera, 'ExposureMode', None) or 'Timed' if safe_get(camera,'ExposureTime',None) is not None else 'N/A'))
-                add_line("ExposureTime", lambda: safe_get(camera, 'ExposureTime', 'N/A'))
-                add_line("Gain", lambda: safe_get(camera, 'Gain', 'N/A'))
-                add_line("AcqFrameRate", lambda: safe_get(camera, 'AcquisitionFrameRate', 'N/A'))
-                add_line("ExposureAuto", lambda: (safe_get(camera, 'ExposureAuto', None) or 'Off'))
-                add_line("GainAuto", lambda: (safe_get(camera, 'GainAuto', None) or 'Off'))
-                # ROI con fallback a builtins.roi si nodos no responden
-                def roi_read():
-                    ox = safe_get(camera,'OffsetX', None); oy = safe_get(camera,'OffsetY', None)
-                    w = safe_get(camera,'Width', None); h = safe_get(camera,'Height', None)
-                    if ox is None or oy is None or w is None or h is None:
-                        try:
-                            import builtins
-                            rx, ry, rw, rh = getattr(builtins, 'roi', (None,None,None,None))
-                            if rx is not None:
-                                return f"X:{rx} Y:{ry} W:{rw} H:{rh}"
-                        except Exception:
-                            pass
-                        return 'N/A'
-                    return f"X:{ox} Y:{oy} W:{w} H:{h}"
-                add_line("ROI", roi_read)
-                # Tick de refresco
-                lines.append(f"t={int((time.time()-t0)*1000)}ms")
-                y = 36
-                cv2.putText(img, lines[0], (16, y), font, 0.9, (0,255,0), 2); y += 28
-                for ln in lines[1:]:
-                    cv2.putText(img, str(ln), (16, y), font, 0.6, (255,255,255), 2); y += 24
-                cv2.imshow(win, img)
-                k = cv2.waitKey(60) & 0xFF
-                if k == 27:
+            add_line("Vendor", lambda: safe_get(camera, 'DeviceVendorName', 'N/A'))
+            add_line("Model", lambda: safe_get(camera, 'DeviceModelName', 'N/A'))
+            add_line("Serial", lambda: safe_get(camera, 'DeviceSerialNumber', 'N/A'))
+            add_line("PixelFormat", lambda: safe_get(camera, 'PixelFormat', 'N/A'))
+            add_line("TriggerMode", lambda: safe_get(camera, 'TriggerMode', 'N/A'))
+            add_line("ExposureMode", lambda: (safe_get(camera, 'ExposureMode', None) or 'Timed' if safe_get(camera,'ExposureTime',None) is not None else 'N/A'))
+            add_line("ExposureTime", lambda: safe_get(camera, 'ExposureTime', 'N/A'))
+            add_line("Gain", lambda: safe_get(camera, 'Gain', 'N/A'))
+            add_line("AcqFrameRate", lambda: safe_get(camera, 'AcquisitionFrameRate', 'N/A'))
+            add_line("ExposureAuto", lambda: (safe_get(camera, 'ExposureAuto', None) or 'Off'))
+            add_line("GainAuto", lambda: (safe_get(camera, 'GainAuto', None) or 'Off'))
+
+            def roi_read():
+                ox = safe_get(camera,'OffsetX', None); oy = safe_get(camera,'OffsetY', None)
+                w = safe_get(camera,'Width', None); h = safe_get(camera,'Height', None)
+                if ox is None or oy is None or w is None or h is None:
+                    try:
+                        import builtins
+                        rx, ry, rw, rh = getattr(builtins, 'roi', (None,None,None,None))
+                        if rx is not None:
+                            return f"X:{rx} Y:{ry} W:{rw} H:{rh}"
+                    except Exception:
+                        pass
+                    return 'N/A'
+                return f"X:{ox} Y:{oy} W:{w} H:{h}"
+
+            add_line("ROI", roi_read)
+            lines.append(f"t={int((time.time()-t0)*1000)}ms")
+
+            y = 36
+            cv2.putText(img, lines[0], (16, y), font, 0.9, (0,255,0), 2); y += 28
+            for ln in lines[1:]:
+                cv2.putText(img, str(ln), (16, y), font, 0.6, (255,255,255), 2); y += 24
+            cv2.imshow(win, img)
+
+            k = cv2.waitKey(60) & 0xFF
+            if k in (27, ord('q')):
+                break
+            # Cierre por X robusto: sólo si alguna vez fue visible y se ve invisible 3 veces seguidas
+            try:
+                vis = cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE)
+                if vis >= 1:
+                    ever_visible = True
+                    invisible_count = 0
+                else:
+                    invisible_count += 1
+                if ever_visible and invisible_count >= 3:
                     break
-            cv2.destroyWindow(win)
-        except Exception as e:
-            log_warning(f"⚠️ Error en INFO: {e}")
-        finally:
-            _info_open = False
-
-    _info_thread = threading.Thread(target=_run, daemon=True)
-    _info_thread.start()
+            except Exception:
+                # No cerrar por errores del backend; permitir cierre con ESC
+                pass
+        cv2.destroyWindow(win)
+    except Exception as e:
+        log_warning(f"⚠️ Error en INFO: {e}")
+    finally:
+        _info_open = False
 
 
 def _show_config_window(camera):
-    """Ventana CONFIG dinámica: sliders + teclas T/A/G (estilo PruebaAravis)."""
+    """CONFIG modal (hilo principal) con sliders y teclas, robusto para GTK/X."""
     import cv2
     import numpy as np
     from core.logging import log_info, log_warning
-    global _config_open, _config_thread
+    global _config_open
     if _config_open:
         return
     _config_open = True
-
-    def _run():
-        try:
+    try:
             def safe_get(cam, name, default=None):
                 try:
                     if hasattr(cam, 'get_node_value'):
@@ -427,6 +431,12 @@ def _show_config_window(camera):
             orig_fps = fps
 
             win = "Config"
+            # Limpieza defensiva por si quedó colgada
+            try:
+                cv2.destroyWindow(win)
+                cv2.waitKey(1)
+            except Exception:
+                pass
             cv2.namedWindow(win, cv2.WINDOW_AUTOSIZE)
             # Trackbars normalizados 0..1000 para mapear a rangos reales
             def to_pos(val, lo, hi):
@@ -445,7 +455,9 @@ def _show_config_window(camera):
             log_info("⚙️ Ventana CONFIG abierta")
             t0 = time.time()
             accepted = False
-            while _config_open:
+            ever_visible = False
+            invisible_count = 0
+            while True:
                 pos_expo = cv2.getTrackbarPos('Exposure', win)
                 pos_gain = cv2.getTrackbarPos('Gain', win)
                 pos_fps = cv2.getTrackbarPos('FPS', win)
@@ -483,7 +495,7 @@ def _show_config_window(camera):
 
                 cv2.imshow(win, img)
                 k = cv2.waitKey(40) & 0xFF
-                if k in (27,):
+                if k in (27, ord('q')):
                     accepted = False
                     break
                 if k in (13, 10):
@@ -498,10 +510,24 @@ def _show_config_window(camera):
                 if k in (ord('g'), ord('G')):
                     cur = str(safe_get(camera, 'GainAuto', 'Off')).lower()
                     safe_set(camera, 'GainAuto', 'Off' if cur in ('continuous','once') else 'Continuous')
-                if (time.time() - t0) > 0.3 and cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE) < 1:
-                    break
+                # Cierre por X robusto (como INFO): solo tras haber sido visible y 3 lecturas invisibles seguidas
+                try:
+                    vis = cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE)
+                    if vis >= 1:
+                        ever_visible = True
+                        invisible_count = 0
+                    else:
+                        invisible_count += 1
+                    if ever_visible and invisible_count >= 3:
+                        break
+                except Exception:
+                    pass
 
-            cv2.destroyWindow(win)
+            try:
+                cv2.destroyWindow(win)
+                cv2.waitKey(1)
+            except Exception:
+                pass
 
             # Restaurar valores si se canceló (ESC)
             if not accepted:
@@ -512,10 +538,7 @@ def _show_config_window(camera):
                     set_fps(camera, float(orig_fps))
                 except Exception:
                     pass
-        except Exception as e:
-            log_warning(f"⚠️ Error en CONFIG: {e}")
-        finally:
-            _config_open = False
-
-    _config_thread = threading.Thread(target=_run, daemon=True)
-    _config_thread.start()
+    except Exception as e:
+        log_warning(f"⚠️ Error en CONFIG: {e}")
+    finally:
+        _config_open = False

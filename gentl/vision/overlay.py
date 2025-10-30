@@ -1,5 +1,5 @@
 """
-Módulo para overlay de YOLO y visualización de detecciones, sin depender de PruebaAravis.
+Módulo para overlay de YOLO y visualización de detecciones.
 """
 import time
 import builtins
@@ -181,8 +181,3 @@ def apply_yolo_overlay(
         log_warning(f"⚠️ Error dibujando overlay YOLO: {e}")
 
     return out
-
-
-# Funciones draw_detection_boxes y draw_track_ids eliminadas
-# porque no se usan y tenían dependencias de PruebaAravis.
-# Todo el dibujo se hace directamente en apply_yolo_overlay()
