@@ -10,6 +10,15 @@ from __future__ import annotations
 import time
 import threading
 import queue
+"""
+YoloService
+-----------
+- Hilo de inferencia YOLO + clasificación por lata.
+- Publica resultados, registra CSV (`vision_log.csv`) y gestiona guardado
+  de imágenes (bad/good) vía `core/recording.py`.
+- Emite "heartbeat" y logs de política de clasificación.
+"""
+
 from typing import Optional, Any, List
 import os
 import csv

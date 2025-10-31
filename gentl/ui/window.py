@@ -1,4 +1,11 @@
 """
+UI Window helpers
+-----------------
+- Crea la ventana principal y dibuja frames con el panel lateral.
+- Proporciona utilidades para mostrar negro con panel y destruir ventana.
+- Usado por `app.py` para la visualización cuando HEADLESS=0.
+"""
+"""
 Módulo para gestión de ventana y presentaciones de la UI.
 """
 import cv2

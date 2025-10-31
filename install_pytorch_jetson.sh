@@ -1,4 +1,12 @@
 #!/bin/bash
+# -------------------------------------------------------------
+# install_pytorch_jetson.sh
+# -------------------------------------------------------------
+# Instala PyTorch 2.0.0+nv23.05 y torchvision compatibles con JP 5.1.1.
+# Crea venv si falta, instala wheels locales o desde índice NVIDIA
+#           y verifica compatibilidad.
+# Dónde se usa: preparación del entorno Python/ML.
+# -------------------------------------------------------------
 set -euo pipefail
 # Instala PyTorch 2.0.0+nv23.05 y torchvision compatible para JetPack 5.1.1 (CUDA 11.4)
 

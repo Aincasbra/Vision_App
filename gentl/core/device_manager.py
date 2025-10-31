@@ -1,6 +1,11 @@
 """
-DeviceManager: encapsula apertura/cierre de cámara y setup básico.
-Mantiene API mínima para que `App` quede como orquestador.
+DeviceManager
+-------------
+- Orquestador de dispositivo de captura. Encapsula apertura/cierre de cámara y setup básico.
+- Abre la cámara a través de `camera/selector.py`,
+  aplica configuración base con `camera/camera_service.py` y devuelve
+  una instancia lista para usar.
+- Desde `gentl/app.py` durante la inicialización.
 """
 from __future__ import annotations
 
@@ -9,18 +14,28 @@ import os
 
 from core.logging import log_info, log_warning, log_error
 from camera.camera_service import CameraService
+from camera.selector import CameraSelector
 
 
 class DeviceManager:
     def __init__(self, backend_cls, bayer_code) -> None:
-        self._backend_cls = backend_cls
+        self._backend_cls = backend_cls  # legacy compat (no usado si factory)
         self._bayer_code = bayer_code
         self.camera = None
 
     def open_camera(self, index: int = 0):
         import cv2  # aseguramos disponibilidad cuando se llame
         try:
-            self.camera = self._backend_cls(index=index, bayer_code=self._bayer_code).open()
+            # Intentar mediante factory (auto/backend desde settings/env)
+            from core.settings import load_settings
+            try:
+                backend_pref = getattr(load_settings(), 'camera', {}).get('backend', 'auto')
+            except Exception:
+                backend_pref = 'auto'
+            self.camera = CameraSelector.create(backend=backend_pref, index=index, bayer_code=self._bayer_code)
+            if self.camera is None:
+                # Fallback al constructor legado si está disponible
+                self.camera = self._backend_cls(index=index, bayer_code=self._bayer_code).open()
             log_info("🔑 Cámara abierta con privilegio: Control")
             self._apply_basic_nodes()
             return self.camera

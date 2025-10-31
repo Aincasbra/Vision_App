@@ -4,6 +4,15 @@ duplicar lógica en UI. No cambia comportamiento; solo centraliza helpers.
 """
 from __future__ import annotations
 
+"""
+CameraService (helpers de cámara)
+---------------------------------
+- Utilidades de acceso seguro (`safe_get/safe_set`) y ROI sobre una
+  cámara ya instanciada (cualquier backend).
+- Centralizar validaciones y logs al leer/escribir nodos.
+- Desde `core/device_manager.py` y `ui/handlers.py`.
+"""
+
 from typing import Any, Tuple
 
 from core.logging import log_warning

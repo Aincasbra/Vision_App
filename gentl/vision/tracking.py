@@ -1,3 +1,9 @@
+"""
+Tracking ligero
+---------------
+- Asigna IDs estables a detecciones entre frames.
+- Utilizado por el overlay o servicios que requieran persistencia básica.
+"""
 import numpy as np
 
 

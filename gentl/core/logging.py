@@ -1,3 +1,11 @@
+"""
+Logging multi-dominio
+---------------------
+- Configuración de loggers `system`, `vision`, `images`, `io`, `timings`
+  con salida a journald/syslog y (opcionalmente) ficheros rotativos/CSV.
+- Trazabilidad en headless y en desarrollo, sin duplicados.
+- Inicializado por `gentl/app.py` y usado por los módulos.
+"""
 import logging
 import os
 from logging.handlers import SysLogHandler, RotatingFileHandler

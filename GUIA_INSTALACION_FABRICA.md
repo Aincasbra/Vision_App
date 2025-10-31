@@ -39,7 +39,6 @@
 3. **Verificar que tienes los archivos necesarios**
    ```bash
    ls -la gentl/app.py
-   ls -la run_calippo.sh
    ls -la install_vision_factory.sh
    ls -la verify_calippo_installation.sh
    ```
@@ -120,6 +119,7 @@ sudo journalctl -u vision-app --no-pager | grep " io:"
 tail -f /var/log/calippo/system/system.log
 tail -f /var/log/calippo/vision/vision_log.csv
 tail -f /var/log/calippo/images/$(date +%F)/images.csv
+tail -f /var/log/calippo/timings/timings_log.csv
 ```
 
 ### **Logs Históricos**
@@ -151,6 +151,8 @@ du -sh /var/log/calippo/*               # Tamaño por directorio
 │   └── io.log                        # Logs IO (cuando haya hardware)
 ├── vision/
 │   └── vision_log.csv                # Por detección (CSV)
+├── timings/
+│   └── timings_log.csv               # Latencias por etapa (CSV)
 ├── images/
 │   └── YYYY-MM-DD/
 │       ├── images.csv                # CSV de imágenes guardadas

@@ -1,4 +1,10 @@
 """
+Overlay de visión
+-----------------
+- Dibuja cajas, textos y HUD sobre la imagen con resultados YOLO.
+- Usado por `app.py` para mostrar la salida en la UI.
+"""
+"""
 Módulo para overlay de YOLO y visualización de detecciones.
 """
 import time

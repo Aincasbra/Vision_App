@@ -1,3 +1,11 @@
+"""
+App (orquestador)
+------------------
+- Inicializa settings, cámara, modelos y servicios; ejecuta el bucle principal.
+- Se apoya en módulos modulares: `core/device_manager`, `vision/yolo_service`,
+  `ui/*`, `core/optimizations`, `core/recording`, etc.
+- Se invoca desde `main.py`.
+"""
 from dataclasses import dataclass
 from typing import Optional
 import threading
@@ -9,7 +17,7 @@ from core.settings import load_settings
 from core.logging import get_logger, log_info, log_warning, log_error
 from core.context import AppContext
 from core.optimizations import apply_all as apply_all_optimizations
-from camera.aravis_backend import AravisBackend
+from camera.genicam_aravis_backend import AravisBackend
 from core.device_manager import DeviceManager
 from vision.yolo_wrapper import YOLOPyTorchCUDA
 from vision.classifier import clf_load

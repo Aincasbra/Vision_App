@@ -1,3 +1,11 @@
+"""
+Recording/Images manager
+------------------------
+- Utilidades de grabación y guardado de imágenes (bad/good),
+  CSV diario y archivado.
+- Trazabilidad de imágenes y soporte a calidad.
+- Se llama desde `vision/yolo_service.py` y la UI (grabación).
+"""
 import os
 import time
 import cv2

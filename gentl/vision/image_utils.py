@@ -1,3 +1,8 @@
+"""
+Image utils
+-----------
+- Utilidades de imagen (gamma, conversiones, ROI) usadas en el pipeline.
+"""
 import cv2
 import numpy as np
 

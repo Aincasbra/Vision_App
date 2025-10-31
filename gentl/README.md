@@ -6,14 +6,19 @@ Este directorio contiene la aplicación modular de visión por computador para J
 - `app.py`: orquestador. Crea contexto, carga settings, inicializa cámara, modelo e hilos.
 - `core/`
   - `settings.py`: configuración central (YAML + env: `HEADLESS`, `AUTO_RUN`, `CONFIG_YOLO`).
-  - `logging.py`: logging multi-dominio (`system`/`vision`/`images`/`io`) → journald y ficheros (si `LOG_TO_FILE=1`).
+  - `logging.py`: logging multi-dominio (`system`/`vision`/`images`/`io`/`timings`) → journald y ficheros (si `LOG_TO_FILE=1`).
   - `device_manager.py`: apertura de cámara y aplicación de nodos base (PixelFormat, ROI, Exposure/Gain, etc.).
   - `recording.py`: grabación y gestor de imágenes (`ImagesManager`: bad/good, `images.csv`, archivado diario a `archive/`).
+  - `timings.py`: `TimingsLogger` (CSV de latencias por etapa + logger `timings`).
 - `vision/`
   - `yolo_wrapper.py`: carga del modelo Ultralytics.
   - `yolo_service.py`: hilo de inferencia; publica resultados y registra `vision_log.csv` por detección (exposición, ganancia, resolución, umbral, bbox).
   - `overlay.py`, `ops.py`, `tracking.py`: visualización y utilidades.
 - `camera/`
+  - `interface.py`: interfaz `CameraBackend`.
+  - `selector.py`: autodetección/selección de backend.
+  - `genicam_aravis_backend.py`: backend GenICam/Aravis.
+  - `onvif_rtsp_backend.py`: backend ONVIF sobre RTSP.
   - `camera_service.py`: `safe_get/safe_set` y helpers ROI.
 - `ui/`
   - `window.py`, `panel.py`, `handlers.py`, `app_controller.py`: UI OpenCV (INFO/CONFIG modales y robustas en Jetson).
@@ -68,9 +73,8 @@ Estructura de `/var/log/calippo/`:
 - `core/device_manager.py`
   - `DeviceManager.open_camera()`: abre backend (Aravis), aplica setup básico (PixelFormat/Trigger/FPS/Expo/Gain/AWB).
   - `stop_camera()`: paro seguro.
-- `camera/camera_service.py`
-  - `safe_get/safe_set`: acceso resiliente a nodos GenICam.
-  - `set_roi/restore_full_frame`: gestión de ROI y restauración a frame completo.
+- `camera/selector.py`: elige `genicam_aravis_backend` u `onvif_rtsp_backend` (según detección o `CAMERA_BACKEND`).
+- `camera/camera_service.py`: `safe_get/safe_set`, `set_roi/restore_full_frame`.
 
 ### Inferencia y visión
 - `vision/yolo_wrapper.py`: wrapper del modelo YOLO (CUDA cuando disponible).
@@ -116,6 +120,7 @@ Estructura de `/var/log/calippo/`:
   - `PYTHONPATH=/home/nvidia/Desktop/Calippo_jetson/gentl`.
   - `CONFIG_YOLO=/home/nvidia/Desktop/Calippo_jetson/gentl/config_yolo.yaml`.
   - `LOG_TO_SYSLOG=0|1`, `LOG_TO_FILE=1`, `LOG_DIR=/var/log/calippo`.
+  - `CAMERA_BACKEND=auto|aravis|onvif`, `RTSP_URL=rtsp://user:pass@ip/...` (para ONVIF), `CLF_BAD_THRESHOLD=0.87`.
 - Operación:
   - `systemctl status --no-pager vision-app`
   - `sudo journalctl -u vision-app -f --no-pager`
@@ -149,7 +154,7 @@ sudo journalctl -u vision-app -f --no-pager
 ```
 
 ## 📝 Logging (dominios y ficheros)
-- Dominios (`core/logging.py`): `system` (gentl), `vision`, `images`, `io`.
+- Dominios (`core/logging.py`): `system` (gentl), `vision`, `images`, `io`, `timings`.
 - Journal (filtrado):
 ```bash
 sudo journalctl -u vision-app --no-pager | grep " gentl:"
@@ -157,7 +162,8 @@ sudo journalctl -u vision-app --no-pager | grep " vision:"
 sudo journalctl -u vision-app --no-pager | grep " images:"
 ```
 - Ficheros (si `LOG_TO_FILE=1` y `LOG_DIR=/var/log/calippo`):
-  - `vision/vision_log.csv`: por detección → `ts,frame_id,num_boxes,classes,avg_conf,proc_ms,camera_exposure,camera_gain,width,height,yolo_threshold,bbox`.
+  - `vision/vision_log.csv`: por detección → `ts,iso_ts,frame_id,num_boxes,classes,avg_conf,proc_ms,camera_exposure,camera_gain,width,height,yolo_threshold,bbox,verdict,clf_label,clf_conf,policy`.
+  - `timings/timings_log.csv`: `iso_ts,frame_id,yolo_ms,crop_ms,forward_ms,classify_ms,csv_ms,images_ms,total_ms`.
   - `images/YYYY-MM-DD/images.csv` + JPGs bad/good; zip diario en `archive/`.
   - `system/system.log`: estado/arranque.
 

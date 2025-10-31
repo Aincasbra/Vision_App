@@ -1,4 +1,12 @@
 """
+Optimizations
+-------------
+- Aplica optimizaciones de CUDA/OpenCV/PyTorch y devuelve
+  umbrales de YOLO desde settings.
+- Centralizar tuning de rendimiento.
+- Se llama desde `gentl/app.py` en la inicialización.
+"""
+"""
 Optimizations: centraliza ajustes de rendimiento (CUDA/OpenCV/PyTorch)
 para ser invocados por `App._apply_optimizations`.
 """

@@ -1,4 +1,12 @@
 #!/bin/bash
+# -------------------------------------------------------------
+# install_vision_factory.sh
+# -------------------------------------------------------------
+# instala/actualiza la Vision App como servicio systemd.
+# prepara directorios de logs, escribe la unidad
+#           `vision-app.service` y la habilita/arranca.
+# Dónde se usa: despliegue en fábrica (headless).
+# -------------------------------------------------------------
 set -euo pipefail
 
 # Instalación y configuración de la Vision App (Jetson, systemd + journald)

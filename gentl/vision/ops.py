@@ -1,3 +1,9 @@
+"""
+Ops de visión
+-------------
+- Utilidades de post-procesado (NMS/fusión, etc.).
+- Consumidas por `overlay.py`/`yolo_service.py`.
+"""
 import numpy as np
 
 

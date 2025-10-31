@@ -1,3 +1,9 @@
+"""
+Profiling helpers
+-----------------
+- Utilidades de profiling puntuales.
+- Medir bloques específicos durante desarrollo.
+"""
 from time import perf_counter
 
 

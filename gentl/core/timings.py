@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+"""
+TimingsLogger
+-------------
+- Helper para cronometrar etapas y volcar métricas a CSV.
+- Diagnosticar latencias en tiempo real (YOLO, crop,
+  forward del clasificador, guardados, total).
+- Se llama desde `vision/yolo_service.py`.
+"""
+
 import os
 import csv
 import time

@@ -1,4 +1,13 @@
 """
+Settings (configuración centralizada)
+------------------------------------
+- Carga parámetros desde YAML (`config_yolo.yaml`) y variables de
+  entorno (HEADLESS, AUTO_RUN, CONFIG_YOLO, LOG_*...).
+- Exponer un objeto de settings consistente al resto de
+  módulos.
+- Se llama desde `gentl/app.py` en el arranque.
+"""
+"""
 Centralización de configuración: YAML + variables de entorno.
 Mantiene compatibilidad exponiendo también el dict original en `raw_config`.
 """

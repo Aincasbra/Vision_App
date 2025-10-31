@@ -1,3 +1,11 @@
+"""
+UI Panel
+--------
+- Dibuja el panel lateral (botones, sliders y métricas) y detecta clics
+  sobre sus áreas.
+- Es usado por `ui/window.py` para componer la interfaz y por
+  `ui/app_controller.py` para mapear clics a acciones.
+"""
 import cv2
 import numpy as np
 

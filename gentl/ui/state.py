@@ -1,3 +1,9 @@
+"""
+UI State
+--------
+- Estado compartido de la interfaz (flags de ventanas, sliders, etc.).
+- Consumido por `ui/handlers.py` y `ui/app_controller.py`.
+"""
 import builtins
 
 

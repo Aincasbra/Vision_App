@@ -1,4 +1,11 @@
 """
+AppController (UI)
+------------------
+- Coordina eventos de la UI (clics, botones) y los traduce a acciones
+  del `App` usando la cola de eventos.
+- Se llama desde `app.py` en el bucle principal y utiliza `handlers.py`.
+"""
+"""
 AppController: capa fina para despachar acciones de UI desde la cola
 sin mezclar la lógica en el bucle principal de App.
 """

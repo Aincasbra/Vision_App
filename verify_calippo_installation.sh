@@ -1,11 +1,12 @@
 #!/bin/bash
-
-# =============================================================================
-# SCRIPT DE VERIFICACIÓN POST-INSTALACIÓN CALIPPO
-# =============================================================================
-# Este script verifica que Calippo esté funcionando correctamente después
-# de la instalación en el equipo de fábrica
-# =============================================================================
+# -------------------------------------------------------------
+# verify_vision_installation.sh
+# -------------------------------------------------------------
+# Verificación post-instalación de la Vision App.
+# Comprueba servicio systemd (vision-app), estructura de logs,
+#           permisos, escritura en tiempo real y espacio en disco.
+# Dónde se usa: tras desplegar con install_vision_factory.sh.
+# -------------------------------------------------------------
 
 set -euo pipefail
 
@@ -36,16 +37,17 @@ print_error() {
 check_systemd_service() {
     print_status "Verificando servicio systemd..."
     
+    local svc="vision-app.service"
     # Verificar que el servicio existe
-    if systemctl list-unit-files | grep -q "calippo.service"; then
-        print_success "✓ Servicio calippo.service existe"
+    if systemctl list-unit-files | grep -q "$svc"; then
+        print_success "✓ Servicio $svc existe"
     else
-        print_error "✗ Servicio calippo.service no encontrado"
+        print_error "✗ Servicio $svc no encontrado"
         return 1
     fi
     
     # Verificar que está habilitado
-    if systemctl is-enabled calippo.service >/dev/null 2>&1; then
+    if systemctl is-enabled "$svc" >/dev/null 2>&1; then
         print_success "✓ Servicio habilitado para autoarranque"
     else
         print_error "✗ Servicio no habilitado para autoarranque"
@@ -53,7 +55,7 @@ check_systemd_service() {
     fi
     
     # Verificar estado actual
-    local status=$(systemctl is-active calippo.service 2>/dev/null || echo "inactive")
+    local status=$(systemctl is-active "$svc" 2>/dev/null || echo "inactive")
     if [[ "$status" == "active" ]]; then
         print_success "✓ Servicio actualmente activo"
     else
@@ -68,7 +70,7 @@ check_logs() {
     print_status "Verificando sistema de logs..."
     
     # Verificar directorios de logs
-    local log_dirs=("system" "digital" "photos" "vision")
+    local log_dirs=("system" "io" "images" "vision" "timings")
     for dir in "${log_dirs[@]}"; do
         if [[ -d "/var/log/calippo/$dir" ]]; then
             print_success "✓ Directorio /var/log/calippo/$dir existe"
@@ -88,8 +90,8 @@ check_logs() {
     
     # Verificar archivos de log específicos
     local log_files=(
-        "/var/log/calippo/system/calippo_jetson.log"
-        "/var/log/calippo/system/calippo_jetson_metrics.log"
+        "/var/log/calippo/vision/vision_log.csv"
+        "/var/log/calippo/timings/timings_log.csv"
     )
     
     for file in "${log_files[@]}"; do
@@ -155,29 +157,7 @@ check_logrotate() {
 }
 
 # Función para verificar script launcher
-check_launcher() {
-    print_status "Verificando script launcher..."
-    
-    local launcher="/home/nvidia/Desktop/Calippo_jetson/run_calippo.sh"
-    
-    # Verificar que existe
-    if [[ -f "$launcher" ]]; then
-        print_success "✓ Script launcher existe"
-    else
-        print_error "✗ Script launcher no encontrado"
-        return 1
-    fi
-    
-    # Verificar permisos de ejecución
-    if [[ -x "$launcher" ]]; then
-        print_success "✓ Script launcher tiene permisos de ejecución"
-    else
-        print_error "✗ Script launcher no tiene permisos de ejecución"
-        return 1
-    fi
-    
-    return 0
-}
+check_launcher() { :; }
 
 # Función para verificar proceso en ejecución
 check_running_process() {
@@ -283,14 +263,14 @@ show_summary() {
     
     # Estado del servicio
     echo "🔧 Estado del servicio:"
-    systemctl status calippo.service --no-pager -l || true
+    systemctl status vision-app.service --no-pager -l || true
     echo ""
     
     # Logs recientes
     echo "📝 Logs recientes:"
-    if [[ -f "/var/log/calippo/system/calippo_jetson.log" ]]; then
-        echo "Últimas 5 líneas de calippo_jetson.log:"
-        tail -5 /var/log/calippo/system/calippo_jetson.log
+    if [[ -f "/var/log/calippo/vision/vision_log.csv" ]]; then
+        echo "Últimas 5 líneas de vision_log.csv:"
+        tail -5 /var/log/calippo/vision/vision_log.csv
     else
         echo "No hay logs de aplicación"
     fi
@@ -305,7 +285,7 @@ show_summary() {
     
     # Uso de recursos
     echo "💾 Uso de recursos:"
-    ps aux | grep -E "python.*(/home/.*/Calippo_jetson/main\.py|-m +gentl\.app|gentl/app\.py)" | grep -v grep || echo "Proceso no encontrado"
+    ps aux | grep -E "python.*(/home/.*/Calippo_jetson/main\.py)" | grep -v grep || echo "Proceso no encontrado"
     echo ""
     
     # Espacio en disco

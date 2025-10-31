@@ -1,4 +1,10 @@
 """
+Device types
+------------
+- Tipos/abstracciones de dispositivo si se requieren.
+- Mantiene tipado y modelos de datos separados de lógica.
+"""
+"""
 Módulo para optimizaciones del sistema y configuración del dispositivo.
 """
 import os

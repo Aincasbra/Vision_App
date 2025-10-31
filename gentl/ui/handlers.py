@@ -1,3 +1,12 @@
+"""
+Handlers de UI
+--------------
+- Contiene funciones para manejar acciones del panel (RUN/STOP, INFO,
+  CONFIG, AWB, RECORD, etc.).
+- Abre las ventanas modales INFO/CONFIG, actualiza sliders y aplica
+  cambios vía `camera/CameraService`.
+- Es invocado por `ui/app_controller.py`.
+"""
 import time
 import threading
 import cv2

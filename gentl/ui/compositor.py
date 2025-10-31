@@ -1,3 +1,9 @@
+"""
+UI Compositor
+-------------
+- Composición final del frame con el panel y overlays.
+- Apoya a `ui/window.py` y `app.py` para mostrar la interfaz.
+"""
 import numpy as np
 import cv2
 from ui.panel import crear_panel_control_stviewer, actualizar_panel_control

@@ -1,3 +1,12 @@
+"""
+Backend GenICam/Aravis
+----------------------
+- Implementación basada en Aravis (GenICam) que expone `AravisBackend`.
+- Acceder a cámaras GenICam (GigE/USB) con API unificada.
+- Instanciado por `camera/selector.py` y configurado por
+  `core/device_manager.py`.
+"""
+
 import time
 import numpy as np
 import cv2

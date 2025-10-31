@@ -1,4 +1,11 @@
 #!/bin/bash
+# -------------------------------------------------------------
+# install_aravis.sh
+# -------------------------------------------------------------
+# Instala Aravis 0.6 (paquetes o compilación como fallback).
+# Soporte GenICam/Aravis en la aplicación (gi.require_version).
+# Dónde se usa: preparación del entorno de cámaras GenICam.
+# -------------------------------------------------------------
 set -euo pipefail
 # Instala Aravis 0.6 (preferible) para usar con gi.require_version('Aravis','0.6')
 

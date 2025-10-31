@@ -1,3 +1,10 @@
+"""
+Config helpers
+--------------
+- Utilidades/constantes auxiliares para configuración.
+- Apoya a `core/settings.py` cuando se requiere separar
+  valores o defaults.
+"""
 import yaml
 
 

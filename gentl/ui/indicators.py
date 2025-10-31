@@ -1,3 +1,9 @@
+"""
+UI Indicators
+-------------
+- Dibuja indicadores superpuestos (REC, AWB, AutoCal, etc.) sobre el frame.
+- Invocado desde `app.py` durante la visualización.
+"""
 import cv2
 import time
 from core.logging import log_warning

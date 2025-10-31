@@ -1,3 +1,9 @@
+"""
+YOLO Wrapper
+------------
+- Encapsula la carga del modelo Ultralytics y la predicción optimizada.
+- Provee una API estable para `YoloService`.
+"""
 from typing import List, Dict
 import os
 import numpy as np

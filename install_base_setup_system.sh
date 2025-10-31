@@ -1,4 +1,12 @@
 #!/bin/bash
+# -------------------------------------------------------------
+# install_base_setup_system.sh
+# -------------------------------------------------------------
+# preparación base del sistema en Jetson (una vez por equipo).
+# instala paquetes del sistema, CUDA/cuDNN/TensorRT, OpenCV,
+#           Aravis y configura variables de entorno y logrotate.
+# Dónde se usa: fase inicial antes de instalar la app/servicio.
+# -------------------------------------------------------------
 set -euo pipefail
 
 # Base setup para Jetson Orin con JetPack 5.1.1 (R35.3.x)

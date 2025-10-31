@@ -56,8 +56,9 @@ Calippo_jetson/
 ├── 🎯 gentl/                    # App principal YOLO + Aravis + logging
 │   ├── app.py                   # Orquestador
 │   ├── config_yolo.yaml         # Configuración YOLO
-│   ├── vision/                  # YoloService, overlay, wrapper
-│   ├── core/                    # logging, device_manager, settings, recording
+│   ├── vision/                  # YoloService, overlay, wrapper, classifier
+│   ├── core/                    # logging, device_manager, settings, recording, timings
+│   ├── camera/                  # interface, selector, genicam_aravis_backend, onvif_rtsp_backend
 │   └── ui/                      # panel, handlers, ventanas
 ├── install_base_setup_system.sh # Setup SO base
 ├── install_pytorch_jetson.sh    # PyTorch en venv
@@ -97,6 +98,7 @@ sudo journalctl -u vision-app --no-pager | grep " io:"
 tail -f /var/log/calippo/system/system.log
 tail -f /var/log/calippo/vision/vision_log.csv
 tail -f /var/log/calippo/images/$(date +%F)/images.csv
+tail -f /var/log/calippo/timings/timings_log.csv
 
 # Prueba de reinicio (opcional)
 sudo reboot
@@ -173,11 +175,12 @@ python3 verificar_replicacion.py
 - **Watchdog**: Reinicio automático si la aplicación se cuelga
 - **Persistencia**: Sobrevive a reinicios y cortes de energía
 
-### Sistema de Logging (4 categorías)
-- **System**: Eventos del sistema, métricas de rendimiento, errores críticos
-- **Digital**: Salidas digitales, comunicación PLC, señales de control
-- **Photos**: Snapshots periódicos, imágenes de defectos detectados
-- **Vision**: Logs detallados por lata procesada (CSV/JSONL)
+### Sistema de Logging (5 categorías)
+- **system**: estado/arranque de la app
+- **vision**: eventos de visión por lata (además de `vision_log.csv`)
+- **images**: guardado de imágenes (CSV diario + JPGs)
+- **io**: I/O/PLC (cuando exista hardware)
+- **timings**: latencias por etapa (complementa `timings_log.csv`)
 
 ### Niveles de Logging
 Cada categoría soporta niveles: `debug`, `info`, `warning`, `error`, `critical`
@@ -187,10 +190,8 @@ Cada categoría soporta niveles: `debug`, `info`, `warning`, `error`, `critical`
 
 ## 📚 Documentación Adicional
 
-- **`gentl/README.md`**: Flujos y modelos de la aplicación
+- **`gentl/README.md`**: Flujos, módulos y capa de cámaras (selector/backends)
 - **`GUIA_INSTALACION_FABRICA.md`**: Guía completa de instalación paso a paso
-- **`SYSTEM_REFERENCE.md`**: Referencia técnica completa (versiones, rutas, comandos)
-- **`gentl/diagnostico_jetpack511.py`**: Diagnóstico del sistema (ejecutar para verificar)
 
 ## 🤝 Contribuir
 

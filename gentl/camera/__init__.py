@@ -1,5 +1,5 @@
 # Camera backend modules
-from .aravis_backend import AravisBackend
+from .genicam_aravis_backend import AravisBackend
 
 __all__ = ['AravisBackend']
 

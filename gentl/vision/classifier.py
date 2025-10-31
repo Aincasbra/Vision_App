@@ -1,3 +1,9 @@
+"""
+Clasificador multiclase (wrapper)
+---------------------------------
+- Carga del modelo de clasificación y predicción sobre recortes BGR.
+- Usado por `vision/yolo_service.py`.
+"""
 from typing import Tuple, List
 import os
 import cv2

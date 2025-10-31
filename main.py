@@ -1,3 +1,9 @@
+"""
+Entry point (main)
+------------------
+- Lanza la aplicación importando `gentl.app.main()`.
+- Usado por el servicio systemd `vision-app.service` y para ejecución manual.
+"""
 #!/usr/bin/env python3
 """
 Punto de entrada principal de la aplicación de visión industrial.

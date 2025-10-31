@@ -1,3 +1,10 @@
+"""
+AppContext
+----------
+- Contenedor de estado compartido (settings, colas, device, logger).
+- Pasa contexto entre módulos sin acoplamiento fuerte.
+- Se usa instanciado en `gentl/app.py` y consumido por UI/YOLO.
+"""
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 import queue
