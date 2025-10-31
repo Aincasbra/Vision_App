@@ -15,22 +15,21 @@ _config_thread = None
 def handle_action(app, action):
     """Despacha acciones del panel. 'app' es instancia de App."""
     from core.logging import log_info, log_warning, log_error
+    from camera.camera_service import CameraService
 
     if action == "RUN":
         # Configurar ROI para captura
         try:
+            svc = CameraService(app.camera)
             def align(v, m=8):
                 return int(v) // m * m
-            h_max = int(app.camera.get_node_value('HeightMax', app.camera.get_node_value('Height', 1240)))
-            w_max = int(app.camera.get_node_value('WidthMax', app.camera.get_node_value('Width', 1624)))
+            h_max = int(svc.safe_get('HeightMax', svc.safe_get('Height', 1240)))
+            w_max = int(svc.safe_get('WidthMax', svc.safe_get('Width', 1624)))
             y1 = align(h_max * 0.50, 8)
             y2 = align(h_max * 0.9, 8)
             new_h = max(align(y2 - y1, 8), 64)
             new_w = align(w_max, 8)
-            app.camera.set_node_value('OffsetX', 0)
-            app.camera.set_node_value('OffsetY', y1)
-            app.camera.set_node_value('Width', new_w)
-            app.camera.set_node_value('Height', new_h)
+            svc.set_roi(0, y1, new_w, new_h)
             builtins.offsetY = int(y1)
             builtins.roi = (0, int(y1), int(new_w), int(new_h))
         except Exception:
@@ -52,13 +51,10 @@ def handle_action(app, action):
         try:
             # Restaurar ROI original antes de parar
             try:
-                # Restaurar tamaño completo de la cámara
-                h_max = int(app.camera.get_node_value('HeightMax', app.camera.get_node_value('Height', 1240)))
-                w_max = int(app.camera.get_node_value('WidthMax', app.camera.get_node_value('Width', 1624)))
-                app.camera.set_node_value('OffsetX', 0)
-                app.camera.set_node_value('OffsetY', 0)
-                app.camera.set_node_value('Width', w_max)
-                app.camera.set_node_value('Height', h_max)
+                # Restaurar tamaño completo de la cámara usando servicio
+                from camera.camera_service import CameraService
+                svc = CameraService(app.camera)
+                w_max, h_max = svc.restore_full_frame()
                 log_info(f"🔄 ROI restaurado a tamaño completo: {w_max}x{h_max}")
             except Exception as e:
                 log_warning(f"⚠️ Error restaurando ROI: {e}")
@@ -218,17 +214,17 @@ def _show_info_window(camera):
     import cv2
     import numpy as np
     from core.logging import log_info, log_warning
+    from camera.camera_service import CameraService
 
     global _info_open
     if _info_open:
         return
     _info_open = True
 
+    svc = CameraService(camera)
     def safe_get(cam, name, default=None):
         try:
-            if hasattr(cam, 'get_node_value'):
-                return cam.get_node_value(name, default)
-            return default
+            return svc.safe_get(name, default)
         except Exception:
             return default
 
@@ -326,24 +322,22 @@ def _show_config_window(camera):
     import cv2
     import numpy as np
     from core.logging import log_info, log_warning
+    from camera.camera_service import CameraService
     global _config_open
     if _config_open:
         return
     _config_open = True
     try:
+            svc = CameraService(camera)
             def safe_get(cam, name, default=None):
                 try:
-                    if hasattr(cam, 'get_node_value'):
-                        return cam.get_node_value(name, default)
-                    return default
+                    return svc.safe_get(name, default)
                 except Exception:
                     return default
 
             def safe_set(cam, name, value):
                 try:
-                    if hasattr(cam, 'set_node_value'):
-                        return cam.set_node_value(name, value)
-                    return False
+                    return svc.safe_set(name, value)
                 except Exception:
                     return False
 

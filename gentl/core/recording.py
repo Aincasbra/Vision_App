@@ -4,6 +4,11 @@ import cv2
 import subprocess
 import threading
 from core.logging import log_info, log_warning, log_error
+from datetime import datetime, timedelta
+import gzip
+import shutil
+import csv
+from typing import Optional
 
 class Recorder:
     def __init__(self, out_dir):
@@ -105,3 +110,92 @@ class Recorder:
                 log_error(f"❌ Error ensamblando video: {e}")
         
         threading.Thread(target=_assemble, daemon=True).start()
+
+
+class ImagesManager:
+    """Gestión de guardado de imágenes (malas y buenas periódicas) + CSV y zip diario.
+
+    - Guarda imágenes "malas" bajo criterio del llamador.
+    - Guarda 1 imagen "buena" cada intervalo (ej. 30 min).
+    - Registra CSV con metadata por imagen guardada.
+    - Empaqueta cada día (cuando cambia la fecha) el directorio del día anterior en .zip.
+    """
+
+    def __init__(self, base_dir: str = None, good_interval_minutes: int = 30):
+        self.base_dir = base_dir or os.path.join(os.environ.get("LOG_DIR", "/var/log/calippo"), "images")
+        self.good_interval = timedelta(minutes=good_interval_minutes)
+        self._last_good_ts: float = 0.0
+        self._last_date: str = ""
+        self._csv_file = None
+        self._csv_writer = None
+        os.makedirs(self.base_dir, exist_ok=True)
+        self._rollover_csv(datetime.now())
+
+    def _rollover_csv(self, now: datetime):
+        day_dir = os.path.join(self.base_dir, now.strftime("%Y-%m-%d"))
+        os.makedirs(day_dir, exist_ok=True)
+        csv_path = os.path.join(day_dir, "images.csv")
+        new_file = not os.path.exists(csv_path)
+        if self._csv_file:
+            try:
+                self._csv_file.flush(); self._csv_file.close()
+            except Exception:
+                pass
+        self._csv_file = open(csv_path, mode="a", newline="")
+        self._csv_writer = csv.writer(self._csv_file)
+        if new_file:
+            self._csv_writer.writerow(["ts","type","path","reason","avg_conf","class","track_id"]) 
+        self._last_date = now.strftime("%Y-%m-%d")
+
+    def _maybe_zip_previous_day(self, now: datetime):
+        try:
+            today = now.strftime("%Y-%m-%d")
+            if self._last_date and self._last_date != today:
+                prev_dir = os.path.join(self.base_dir, self._last_date)
+                if os.path.isdir(prev_dir):
+                    zip_path = os.path.join(self.base_dir, f"{self._last_date}.zip")
+                    shutil.make_archive(zip_path.replace('.zip',''), 'zip', prev_dir)
+                    log_info(f"🗜️ Imagenes archivadas: {zip_path}", logger_name="images")
+        except Exception as e:
+            log_warning(f"⚠️ Error zipeando imágenes: {e}", logger_name="images")
+
+    def _ensure_day(self, now: datetime):
+        if now.strftime("%Y-%m-%d") != self._last_date:
+            self._maybe_zip_previous_day(now)
+            self._rollover_csv(now)
+
+    def _save_image(self, image_bgr, img_type: str, reason: str = "", avg_conf: float = 0.0, cls: str = "", track_id: int = -1) -> str:
+        now = datetime.now()
+        self._ensure_day(now)
+        day_dir = os.path.join(self.base_dir, now.strftime("%Y-%m-%d"))
+        ts = now.strftime("%H%M%S")
+        ms = int((time.time()*1000) % 1000)
+        fname = f"{img_type}_{ts}_{ms:03d}.jpg"
+        fpath = os.path.join(day_dir, fname)
+        try:
+            ok, enc = cv2.imencode('.jpg', image_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+            if ok:
+                enc.tofile(fpath)
+                # CSV
+                try:
+                    self._csv_writer.writerow([
+                        now.isoformat(), img_type, fpath, reason, f"{avg_conf:.4f}", cls, track_id
+                    ])
+                    self._csv_file.flush()
+                except Exception:
+                    pass
+                log_info(f"🖼️ Imagen guardada: {fpath}", logger_name="images")
+                return fpath
+        except Exception as e:
+            log_warning(f"⚠️ Error guardando imagen: {e}", logger_name="images")
+        return ""
+
+    def save_bad(self, image_bgr, reason: str = "", avg_conf: float = 0.0, cls: str = "", track_id: int = -1) -> str:
+        return self._save_image(image_bgr, "bad", reason, avg_conf, cls, track_id)
+
+    def save_good_periodic(self, image_bgr) -> Optional[str]:
+        now = time.time()
+        if (now - self._last_good_ts) >= self.good_interval.total_seconds():
+            self._last_good_ts = now
+            return self._save_image(image_bgr, "good", "periodic")
+        return None

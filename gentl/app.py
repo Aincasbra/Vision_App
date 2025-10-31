@@ -5,21 +5,22 @@ import queue
 import time
 import numpy as np
 
-from core.config import load_yaml_config
+from core.settings import load_settings
 from core.logging import get_logger, log_info, log_warning, log_error
 from core.context import AppContext
-from core.device import apply_system_optimizations
+from core.optimizations import apply_all as apply_all_optimizations
 from camera.aravis_backend import AravisBackend
+from core.device_manager import DeviceManager
 from vision.yolo_wrapper import YOLOPyTorchCUDA
 from vision.classifier import clf_load
 from vision.overlay import apply_yolo_overlay
-from vision.ops import merge_overlapping_detections
-from vision.tracking import assign_stable_ids
-from ui.panel import detectar_clic_panel_control, actualizar_panel_control
+# Limpieza: imports de ops/tracking/panel no usados aquí
 from ui.handlers import handle_action
+from ui.app_controller import AppController
 from ui.window import create_main_window, show_frame_with_panel, show_black_with_panel, destroy_window
 from vision.image_utils import apply_gamma_from_state
 from core.recording import Recorder
+from vision.yolo_service import YoloService
 
 # Constantes de configuración YOLO
 PROCESS_EVERY = 1
@@ -29,7 +30,8 @@ YOLO_CONF = 0.1  # Se puede sobrescribir por YAML
 YOLO_IOU = 0.5
 YOLO_WEIGHTS = "yolov8n.pt"  # Se sobrescribe por YAML
 YOLO_IMGSZ = 640
-CLF_MODEL_PATH = "models/classifier.pth"
+# Ruta del clasificador multiclase (ajustada al archivo existente en el proyecto)
+CLF_MODEL_PATH = "/home/nvidia/Desktop/Calippo_jetson/gentl/clasificador_multiclase_torch.pt"
 
 # Estado global para tracking
 bbox_ema = {}
@@ -45,6 +47,7 @@ class App:
     context: AppContext
     camera: Optional[AravisBackend] = None
     yolo_model: Optional[YOLOPyTorchCUDA] = None
+    yolo_service: Optional[YoloService] = None
     running: bool = False
     # Estado de grabación
     recording_active: bool = False
@@ -65,7 +68,10 @@ class App:
     def __post_init__(self):
         self.logger = get_logger("calippo")
         self.context.logger = self.logger
-        self.context.config = load_yaml_config()
+        settings = load_settings()
+        self.context.settings = settings
+        # Compat: mantener config dict para módulos antiguos
+        self.context.config = settings.raw_config
         self.context.evt_queue = queue.Queue()
         # Asegurar colas usadas por hilos (UI/YOLO)
         try:
@@ -123,6 +129,12 @@ class App:
         """Detiene la aplicación."""
         log_info("⏹️ Deteniendo aplicación...")
         self.running = False
+        # Detener servicio YOLO si está activo
+        try:
+            if self.yolo_service is not None:
+                self.yolo_service.stop()
+        except Exception:
+            pass
         
         # Detener cámara
         if self.camera:
@@ -148,71 +160,28 @@ class App:
     
     def _apply_optimizations(self):
         """Aplica optimizaciones del sistema."""
-        import torch
-        import cv2
-        
         # Variables globales que necesitamos configurar
         global PROCESS_EVERY, MISS_HOLD, RESULT_TTL_S, YOLO_CONF, YOLO_IOU
         global bbox_ema, histories, last_seen, last_conf
-        
-        # Detectar CUDA
-        torch_cuda_available = torch.cuda.is_available()
-        
-        # Aplicar optimizaciones del sistema usando el módulo dedicado
-        apply_system_optimizations()
-        
-        # Optimizaciones para alta velocidad
-        log_info("🚀 APLICANDO OPTIMIZACIONES PARA ALTA VELOCIDAD (300 latas/min)")
-        
-        MISS_HOLD = 4  # Mantener detecciones 4 frames sin verlas
-        RESULT_TTL_S = 0.05  # TTL más corto para objetos rápidos
-        # Cargar umbrales desde YAML si existen, si no usar defaults optimizados
-        try:
-            yolo_cfg = (self.context.config or {}).get('yolo', {})
-        except Exception:
-            yolo_cfg = {}
-        YOLO_CONF = float(yolo_cfg.get('confidence_threshold', 0.4))
-        YOLO_IOU = float(yolo_cfg.get('iou_threshold', 0.7))
-        
+
+        # Aplicar optimizaciones centralizadas y recoger umbrales
+        YOLO_CONF, YOLO_IOU = apply_all_optimizations(self.context)
+
+        # Parámetros de tracking de alta velocidad
+        MISS_HOLD = 4
+        RESULT_TTL_S = 0.05
+
         log_info(f"✅ Optimizaciones aplicadas:")
         log_info(f"   - Procesa 1 de cada {PROCESS_EVERY} frames")
         log_info(f"   - Hold: {MISS_HOLD} frames")
         log_info(f"   - TTL: {RESULT_TTL_S}s")
         log_info(f"   - YOLO Conf: {YOLO_CONF}, IOU: {YOLO_IOU}")
-        
-        # Optimizaciones CUDA
-        if torch_cuda_available:
-            log_info("🚀 HABILITANDO OPTIMIZACIONES CUDA UNIFICADAS")
-            
-            # Configurar PyTorch para máximo rendimiento en Jetson
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.deterministic = False
-            torch.backends.cudnn.enabled = True
-            
-            # Optimizaciones específicas para Jetson
-            torch.set_num_threads(1)  # Un solo hilo para CUDA
-            torch.set_num_interop_threads(1)
-            
-            # Configurar memoria GPU
-            torch.cuda.empty_cache()
-            torch.cuda.set_per_process_memory_fraction(0.8)  # Usar 80% de GPU
-            
-            # Configurar OpenCV para usar todos los cores disponibles
-            cv2.setUseOptimized(True)
-            cv2.setNumThreads(0)
-            
-            log_info("✅ Optimizaciones CUDA unificadas habilitadas")
-            log_info(f"   - PyTorch CUDA: {torch.cuda.is_available()}")
-            log_info(f"   - Dispositivo: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
-        else:
-            log_warning("⚠️ CUDA no disponible, usando optimizaciones CPU")
-        
-        # Configurar tracking para alta velocidad
+
+        # Reset de estructuras de tracking
         bbox_ema.clear()
         histories.clear()
         last_seen.clear()
         last_conf.clear()
-        
         log_info("✅ Sistema de tracking optimizado para alta velocidad")
     
     def _load_models(self):
@@ -229,7 +198,7 @@ class App:
         try:
             # Aplicar configuración YAML para modelo/imagen
             try:
-                yolo_cfg = (self.context.config or {}).get('yolo', {})
+                yolo_cfg = dict(getattr(self.context, 'settings', None).yolo)
             except Exception:
                 yolo_cfg = {}
             weights_path = str(yolo_cfg.get('model_path') or yolo_cfg.get('model') or YOLO_WEIGHTS)
@@ -285,12 +254,11 @@ class App:
         import os
         
         try:
-            # Crear backend Aravis y abrir cámara
-            self.camera = AravisBackend(index=0, bayer_code=cv2.COLOR_BayerBG2BGR).open()
-            log_info("🔑 Cámara abierta con privilegio: Control")
+            # Usar DeviceManager para apertura y setup
+            dm = DeviceManager(AravisBackend, cv2.COLOR_BayerBG2BGR)
+            self.camera = dm.open_camera(index=0)
             
             # Dump inicial de parámetros (si existe utilidad)
-            # Debug: mostrar parámetros de cámara
             try:
                 log_info("📷 Parámetros de cámara:")
                 log_info(f"   - PixelFormat: {self.camera.get('PixelFormat', 'N/A')}")
@@ -298,20 +266,6 @@ class App:
                 log_info(f"   - Height: {self.camera.get('Height', 'N/A')}")
             except Exception:
                 pass
-            
-            # Configuración básica de nodos si no está en solo lectura
-            try:
-                # Usar métodos directos del backend Aravis
-                self.camera.set('PixelFormat', 'BayerBG8')
-                self.camera.set('TriggerMode', 'Off')
-                self.camera.set('AcquisitionFrameRate', 15.0)
-                self.camera.set('ExposureAuto', 'Off')
-                self.camera.set('ExposureMode', 'Timed')
-                self.camera.set('ExposureTime', 4000.0)
-                self.camera.set('Gain', 28.0)
-                self.camera.set('BalanceWhiteAuto', 'Off')
-            except Exception as e:
-                log_warning(f"⚠️ No se aplicó configuración extendida de cámara: {e}")
             
             # Configurar código Bayer en contexto si se usa aguas abajo
             self.context.config["cv_code_bayer"] = cv2.COLOR_BayerBG2BGR
@@ -333,196 +287,49 @@ class App:
     def _start_threads(self):
         """Inicia hilos de procesamiento."""
         try:
-            # Hilo YOLO reactivado - ahora lee desde builtins.latest_frame
-            t = threading.Thread(target=self._yolo_inference_thread, daemon=True)
-            t.start()
-            log_info("🧵 Hilo de inferencia YOLO modular iniciado")
+            # Iniciar servicio de inferencia YOLO (sustituye hilo interno)
+            self.yolo_service = YoloService(
+                yolo_model=self.yolo_model,
+                infer_queue=self.context.infer_queue,
+                conf_threshold=YOLO_CONF,
+                process_every=PROCESS_EVERY,
+                camera=self.camera,
+            )
+            self.yolo_service.start()
         except Exception as e:
-            log_error(f"❌ No se pudo iniciar hilo YOLO: {e}")
+            log_error(f"❌ No se pudo iniciar YoloService: {e}")
         
         # Aquí podría iniciarse hilo de captura si es necesario en el futuro
         
     def _yolo_inference_thread(self):
-        """Hilo de inferencia YOLO modular."""
-        import builtins
-        global frame_count
-        
-        log_info("🧵 Hilo de inferencia YOLO modular iniciado")
-        
-        while True:
-            try:
-                # Leer frame más reciente desde builtins
-                if not hasattr(builtins, 'latest_frame') or builtins.latest_frame is None:
-                    time.sleep(0.01)
-                    continue
-                
-                # Obtener frame actual
-                img_bgr = builtins.latest_frame.copy()
-                frame_id = getattr(builtins, 'latest_fid', 0)
-                
-                # Procesar solo cada PROCESS_EVERY frame
-                if frame_count % PROCESS_EVERY != 0:
-                    frame_count += 1
-                    continue
-                
-                # Inferencia YOLO
-                if self.yolo_model is not None:
-                    try:
-                        # Detecciones raw
-                        results = self.yolo_model.predict(img_bgr, conf_threshold=YOLO_CONF)
-                        
-                        # Debug: verificar resultados
-                        xyxy = np.array([])
-                        confs = np.array([])
-                        clss = np.array([])
-                        
-                        if results and len(results) > 0:
-                            raw_boxes, raw_confs, raw_clss = [], [], []
-
-                            # Caso ONNX/Runtime: lista de dicts [{'bbox':[x1,y1,x2,y2],'confidence':..,'class_id':..}, ...]
-                            if isinstance(results[0], dict):
-                                dets = results
-                                for det in dets:
-                                    bbox = det.get('bbox') or det.get('xyxy') or det.get('box')
-                                    if bbox is None or len(bbox) < 4:
-                                        continue
-                                    raw_boxes.append([float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])])
-                                    raw_confs.append(float(det.get('confidence', 0.0)))
-                                    raw_clss.append(int(det.get('class_id', -1)))
-                                raw_boxes = np.asarray(raw_boxes, dtype=np.float32)
-                                raw_confs = np.asarray(raw_confs, dtype=np.float32)
-                                raw_clss = np.asarray(raw_clss, dtype=np.int32)
-
-                            # Caso Ultralytics: objeto con .boxes
-                            else:
-                                result = results[0]
-                                if hasattr(result, 'boxes') and result.boxes is not None:
-                                    raw_boxes = result.boxes.xyxy.cpu().numpy()
-                                    raw_confs = result.boxes.conf.cpu().numpy()
-                                    try:
-                                        raw_clss = result.boxes.cls.cpu().numpy()
-                                    except Exception:
-                                        raw_clss = np.full((len(raw_boxes),), -1, dtype=np.int32)
-                                else:
-                                    raw_boxes = np.empty((0,4), dtype=np.float32)
-                                    raw_confs = np.empty((0,), dtype=np.float32)
-                                    raw_clss = np.empty((0,), dtype=np.int32)
-                            
-                            log_info(f"🔍 YOLO raw: {len(raw_boxes)} detecciones, confs: {raw_confs[:3] if len(raw_confs) > 0 else 'ninguna'}")
-                            
-                            # Filtrar clases permitidas (0, 1, 2)
-                            allowed_classes = {0, 1, 2}
-                            mask = np.isin(raw_clss, list(allowed_classes))
-                            xyxy = raw_boxes[mask]
-                            confs = raw_confs[mask]
-                            clss = raw_clss[mask]
-                            
-                            log_info(f"🎯 YOLO filtrado: {len(xyxy)} detecciones válidas")
-                        else:
-                            log_info("❌ YOLO: Sin resultados")
-                            
-                        # Fusionar detecciones superpuestas
-                        if len(xyxy) > 0:
-                            xyxy, confs, clss = merge_overlapping_detections(xyxy, confs, clss, iou_threshold=0.7)
-                            
-                            # Asignar IDs estables
-                            if len(xyxy) > 0:
-                                local_ids = assign_stable_ids(xyxy, confs, clss, frame_count)
-                                
-                                # Preparar resultado para la cola de inferencia
-                                infer_result = {
-                                    'frame_id': frame_id,
-                                    'xyxy': xyxy.tolist(),
-                                    'tids': local_ids,
-                                    'lids': local_ids,
-                                    'proc_ms': 0.0,  # TODO: medir tiempo real
-                                    'ts': time.time()
-                                }
-                                
-                                # Enviar a cola de inferencia
-                                try:
-                                    self.context.infer_queue.put_nowait(infer_result)
-                                except queue.Full:
-                                    pass  # Descartar si está llena
-                                
-                                log_info(f"🎯 YOLO: {len(xyxy)} detecciones, IDs: {local_ids}")
-                            else:
-                                log_info("❌ Sin detecciones válidas")
-                        else:
-                            log_info("❌ Sin resultados YOLO")
-                            
-                    except Exception as e:
-                        log_warning(f"⚠️ Error en inferencia YOLO: {e}")
-                
-                frame_count += 1
-                
-            except Exception as e:
-                log_warning(f"⚠️ Error en hilo YOLO: {e}")
-                time.sleep(0.01)
-        
-        log_info("🔄 Hilo de inferencia YOLO modular detenido")
-        
-    def _handle_mouse_click(self, event, x, y, flags, param):
-        """Maneja clics del ratón en la ventana principal."""
-        import cv2
-        import builtins
-        
-        if event == cv2.EVENT_LBUTTONDOWN:
-            try:
-                # Debug de clics 
-                panel_offset_x = getattr(builtins, 'panel_offset_x', 0)
-                current_img_h = getattr(builtins, 'current_img_h', 720)
-                log_info(f"[click] x={x}, y={y}, panel_x={x - panel_offset_x}, panel_y={y}")
-                
-                # Detectar clic en panel usando dimensiones actuales
-                panel_h_effective = max(current_img_h, 900)
-                accion = detectar_clic_panel_control(x, y, panel_offset_x, panel_h_effective)
-                log_info(f"🔍 Detección de clic: panel_offset_x={panel_offset_x}, panel_h_effective={panel_h_effective}, accion={accion}")
-                
-                if accion:
-                    log_info(f"📤 Enviando acción a cola: {accion}")
-                    self.context.evt_queue.put(accion)
-                    
-                    # Log de acciones
-                    if accion == "RUN":
-                        log_info("🚀 Botón RUN presionado - Iniciando cámara...")
-                    elif accion == "STOP":
-                        log_info("⏹️ Botón STOP presionado - Pausando cámara...")
-                    elif accion == "AWB_ONCE":
-                        log_info("🔄 AWB Once presionado...")
-                    elif accion == "AUTO_CAL":
-                        log_info("🎨 Auto Calibración presionado...")
-                    elif accion == "CONFIG":
-                        log_info("⚙️ Configuración presionado...")
-                    elif accion == "EXIT":
-                        log_info("🚪 Botón SALIR presionado - Cerrando aplicación...")
-                        self.running = False
-                    elif accion.startswith("GAMMA_"):
-                        gamma_val = float(accion.split("_")[1])
-                        self.gamma_actual = gamma_val
-                        log_info(f"📊 Gamma ajustado a: {gamma_val}")
-                    elif accion.startswith("BAYER_"):
-                        bayer_code = accion.split("_")[1]
-                        log_info(f"🎨 Patrón Bayer cambiado a: {bayer_code}")
-                        
-            except Exception as e:
-                log_warning(f"⚠️ Error procesando clic: {e}")
+        """Sustituido por YoloService. Método legado no utilizado."""
+        log_info("ℹ️ _yolo_inference_thread está obsoleto: use YoloService")
+        time.sleep(0.01)
+        return
         
     def _run_main_loop(self):
         """Ejecuta el bucle principal."""
-        import os
         import time
         import cv2
         import builtins
         import numpy as np
         
-        headless = os.environ.get("HEADLESS", "0") == "1"
+        # Flags desde settings centralizadas
+        try:
+            headless = bool(self.context.settings.headless)
+        except Exception:
+            headless = False
+        try:
+            auto_run = bool(self.context.settings.auto_run)
+        except Exception:
+            auto_run = False
         win_name = "Calippo"
         
         # Variables del bucle principal
         f = 0
         t0 = time.time()
         acquisition_running = False
+        controller = AppController()
         
         # Crear UI si no es headless
         if not headless:
@@ -539,7 +346,8 @@ class App:
                 
                 # Configurar callback del ratón en la ventana correcta
                 try:
-                    cv2.setMouseCallback(win_name, self._handle_mouse_click)
+                    # Registrar controlador de ratón desacoplado
+                    cv2.setMouseCallback(win_name, lambda e, x, y, f, p=None: controller.handle_mouse_click(e, x, y, f, self))
                 except Exception:
                     pass
                 
@@ -549,8 +357,8 @@ class App:
                 log_warning(f"⚠️ No se pudo crear ventana UI: {e}. Forzando HEADLESS.")
                 headless = True
         
-        # En headless, auto-ejecutar RUN
-        if headless:
+        # Auto-ejecutar RUN si headless o AUTO_RUN
+        if headless or auto_run:
             try:
                 self.context.evt_queue.put("RUN")
             except Exception:
@@ -559,35 +367,20 @@ class App:
         log_info("🏃 Entrando en bucle principal de la aplicación")
         try:
             while self.running:
-                # Procesar eventos de UI del panel
-                accion = None
-                try:
-                    accion = self.context.evt_queue.get_nowait()
-                except Exception:
-                    accion = None
-                
-                if accion:
-                    log_info(f"🎯 Procesando acción: {accion}")
-                    try:
-                        resp = handle_action(self, accion)
-                        log_info(f"✅ Respuesta de acción: {resp}")
-                        
-                        if "acquisition_running" in resp:
-                            acquisition_running = bool(resp["acquisition_running"])
-                            log_info(f"📷 Estado de adquisición: {acquisition_running}")
-                        if resp.get("record_start"):
-                            # Iniciar grabación N segundos
-                            try:
-                                self.recorder.start(seconds=int(resp["record_start"]))
-                                self.recording_active = True
-                                log_info(f"🎬 Grabación iniciada: {resp['record_start']}s")
-                            except Exception as e:
-                                log_warning(f"⚠️ Error iniciando grabación: {e}")
-                                self.recording_active = False
-                    except Exception as e:
-                        log_warning(f"⚠️ Error procesando acción {accion}: {e}")
-                    # EXIT se maneja en handler RUN/STOP; aquí solo seguimos
-                    accion = None
+                # Procesar eventos de UI del panel (controlador dedicado)
+                resp = controller.process_pending(self)
+                if resp:
+                    if "acquisition_running" in resp:
+                        acquisition_running = bool(resp["acquisition_running"])
+                        log_info(f"📷 Estado de adquisición: {acquisition_running}")
+                    if resp.get("record_start"):
+                        try:
+                            self.recorder.start(seconds=int(resp["record_start"]))
+                            self.recording_active = True
+                            log_info(f"🎬 Grabación iniciada: {resp['record_start']}s")
+                        except Exception as e:
+                            log_warning(f"⚠️ Error iniciando grabación: {e}")
+                            self.recording_active = False
                 
                 # Bucle principal de captura y visualización
                 if acquisition_running:

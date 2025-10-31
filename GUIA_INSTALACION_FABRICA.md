@@ -6,7 +6,7 @@
 
 1. Base del sistema (CUDA 11.4, cuDNN 8.6, TensorRT 8.5.2, deps, entorno):
    ```bash
-   sudo /home/nvidia/Desktop/Calippo_jetson/base_setup_system.sh
+   sudo /home/nvidia/Desktop/Calippo_jetson/install_base_setup_system.sh
    ```
 
 2. PyTorch/TorchVision en la venv del proyecto (usa wheel local si lo tienes):
@@ -38,10 +38,9 @@
 
 3. **Verificar que tienes los archivos necesarios**
    ```bash
-   ls -la gentl/PruebaAravis.py
-   ls -la gentl/logging_system.py
+   ls -la gentl/app.py
    ls -la run_calippo.sh
-   ls -la install_calippo_factory.sh
+   ls -la install_vision_factory.sh
    ls -la verify_calippo_installation.sh
    ```
 
@@ -49,18 +48,14 @@
 
 1. **Ejecutar el script de instalación**
    ```bash
-   ./install_calippo_factory.sh
+   ./install_vision_factory.sh
    ```
 
 2. **El script hará automáticamente:**
    - ✅ Verificar usuario y directorio
-   - ✅ Instalar dependencias del sistema (logrotate, rsyslog)
    - ✅ Crear directorios de logs con permisos correctos
-   - ✅ Configurar rsyslog para logs de aplicación
-   - ✅ Configurar logrotate para rotación diaria
-   - ✅ Crear servicio systemd para autoarranque
+   - ✅ Crear servicio systemd `vision-app.service` para autoarranque
    - ✅ Configurar permisos del script launcher
-   - ✅ Configurar cron job para logrotate
    - ✅ Verificar toda la instalación
    - ✅ Probar el servicio
 
@@ -74,10 +69,7 @@
 2. **El script verificará:**
    - ✅ Servicio systemd configurado y habilitado
    - ✅ Directorios de logs creados con permisos correctos
-   - ✅ Configuración de rsyslog funcionando
-   - ✅ Configuración de logrotate instalada
-   - ✅ Script launcher con permisos correctos
-   - ✅ Proceso Calippo ejecutándose
+   - ✅ Proceso Vision App ejecutándose
    - ✅ Logs actualizándose en tiempo real
    - ✅ Espacio en disco suficiente
 
@@ -91,50 +83,56 @@
 2. **Después del reinicio, verificar que funciona**
    ```bash
    # Esperar 2-3 minutos para que arranque completamente
-   systemctl status calippo.service
+   systemctl status vision-app.service
    ```
 
 3. **Verificar logs**
    ```bash
-   tail -f /var/log/calippo/system/calippo_jetson.log
+   sudo journalctl -u vision-app -f --no-pager
    ```
 
 ## 🔧 COMANDOS ÚTILES PARA MONITOREO
 
 ### **Estado del Servicio**
 ```bash
-systemctl status calippo.service          # Estado general
-systemctl is-active calippo.service       # Solo si está activo
-systemctl is-enabled calippo.service      # Solo si está habilitado
+systemctl status vision-app.service          # Estado general
+systemctl is-active vision-app.service       # Solo si está activo
+systemctl is-enabled vision-app.service      # Solo si está habilitado
 ```
 
 ### **Control del Servicio**
 ```bash
-sudo systemctl start calippo.service      # Iniciar servicio
-sudo systemctl stop calippo.service       # Detener servicio
-sudo systemctl restart calippo.service    # Reiniciar servicio
-sudo systemctl reload calippo.service     # Recargar configuración
+sudo systemctl start vision-app.service      # Iniciar servicio
+sudo systemctl stop vision-app.service       # Detener servicio
+sudo systemctl restart vision-app.service    # Reiniciar servicio
+sudo systemctl reload vision-app.service     # Recargar configuración
 ```
 
 ### **Logs en Tiempo Real**
 ```bash
-tail -f /var/log/calippo/system/calippo_jetson.log           # Logs principales
-tail -f /var/log/calippo/system/calippo_jetson_metrics.log   # Métricas
-tail -f /var/log/calippo/vision/vision_log.csv              # Logs de visión
-sudo journalctl -u calippo.service -f                        # Logs del sistema
+sudo journalctl -u vision-app -f --no-pager
+# Filtrado por dominios
+sudo journalctl -u vision-app --no-pager | grep " gentl:"
+sudo journalctl -u vision-app --no-pager | grep " vision:"
+sudo journalctl -u vision-app --no-pager | grep " images:"
+sudo journalctl -u vision-app --no-pager | grep " io:"
+# Ficheros si LOG_TO_FILE=1
+tail -f /var/log/calippo/system/system.log
+tail -f /var/log/calippo/vision/vision_log.csv
+tail -f /var/log/calippo/images/$(date +%F)/images.csv
 ```
 
 ### **Logs Históricos**
 ```bash
-sudo journalctl -u calippo.service --since "1 hour ago"     # Última hora
-sudo journalctl -u calippo.service --since "2025-01-01"     # Desde fecha específica
-sudo journalctl -u calippo.service -n 100                    # Últimas 100 líneas
+sudo journalctl -u vision-app --since "1 hour ago"     # Última hora
+sudo journalctl -u vision-app --since "2025-01-01"     # Desde fecha específica
+sudo journalctl -u vision-app -n 100                    # Últimas 100 líneas
 ```
 
 ### **Verificar Proceso**
 ```bash
-ps aux | grep PruebaAravis              # Proceso ejecutándose
-top -p $(pgrep -f PruebaAravis)         # Uso de recursos
+PID=$(systemctl show -p MainPID --value vision-app); ps -fp "$PID"
+top -b -n1 -p "$PID"
 ```
 
 ### **Espacio en Disco**
@@ -148,55 +146,43 @@ du -sh /var/log/calippo/*               # Tamaño por directorio
 ```
 /var/log/calippo/
 ├── system/
-│   ├── calippo_jetson.log              # Logs principales de aplicación
-│   ├── calippo_jetson_metrics.log      # Métricas de rendimiento
-│   ├── syslog.log                       # Logs del sistema (rsyslog)
-│   └── syslog_errors.log               # Solo errores del sistema
-├── digital/
-│   └── digital_io.log                  # Logs de salidas digitales/PLC
-├── photos/
-│   ├── snapshots/                      # Fotos periódicas
-│   └── defects/                        # Fotos de defectos
-└── vision/
-    ├── vision_log.csv                  # Logs detallados por lata (CSV)
-    └── vision_log.jsonl                # Logs detallados por lata (JSON)
+│   └── system.log                    # Logs de sistema (si LOG_TO_FILE=1)
+├── io/
+│   └── io.log                        # Logs IO (cuando haya hardware)
+├── vision/
+│   └── vision_log.csv                # Por detección (CSV)
+├── images/
+│   └── YYYY-MM-DD/
+│       ├── images.csv                # CSV de imágenes guardadas
+│       └── *.jpg                     # bad/good
+└── archive/                          # ZIPs diarios de imágenes
 ```
-
-## 🔄 ROTACIÓN AUTOMÁTICA DE LOGS
-
-- **Frecuencia**: Diaria a las 00:00
-- **Retención**: 30 días
-- **Compresión**: Automática con gzip
-- **Formato**: `archivo-YYYYMMDD.log.gz`
 
 ## ⚠️ SOLUCIÓN DE PROBLEMAS
 
 ### **Servicio no arranca**
 ```bash
-sudo journalctl -u calippo.service -n 50    # Ver últimos errores
-sudo systemctl daemon-reload                # Recargar configuración
-sudo systemctl restart calippo.service      # Reiniciar servicio
+sudo journalctl -u vision-app.service -n 50    # Ver últimos errores
+sudo systemctl daemon-reload                   # Recargar configuración
+sudo systemctl restart vision-app.service      # Reiniciar servicio
 ```
 
 ### **Logs no se generan**
 ```bash
-sudo systemctl status rsyslog               # Verificar rsyslog
-sudo systemctl restart rsyslog              # Reiniciar rsyslog
 ls -la /var/log/calippo/                    # Verificar permisos
+systemctl show vision-app -p Environment    # Ver variables LOG_*
 ```
 
 ### **Proceso no ejecutándose**
 ```bash
-ps aux | grep PruebaAravis                  # Buscar proceso
-sudo systemctl start calippo.service        # Iniciar servicio
-./run_calippo.sh                           # Ejecutar manualmente para debug
+PID=$(systemctl show -p MainPID --value vision-app); ps -fp "$PID"
+sudo systemctl start vision-app.service
 ```
 
 ### **Espacio en disco lleno**
 ```bash
 df -h                                       # Verificar espacio
 sudo du -sh /var/log/calippo/*             # Ver tamaño de logs
-sudo logrotate -f /etc/logrotate.d/calippo # Forzar rotación
 ```
 
 ## 🎯 VERIFICACIÓN FINAL
@@ -207,74 +193,47 @@ Después de la instalación, debe cumplirse:
 2. ✅ **Ejecución continua**: El proceso corre sin intervención
 3. ✅ **Logs activos**: Se generan logs en tiempo real
 4. ✅ **Reinicio automático**: Si falla, se reinicia automáticamente
-5. ✅ **Rotación de logs**: Los logs se comprimen diariamente
+5. ✅ **Rotación de logs**: (si se configura a futuro)
 6. ✅ **Modo headless**: Funciona sin interfaz gráfica
-
-## 📞 SOPORTE
-
-Si encuentras problemas:
-
-1. **Ejecutar verificación completa**:
-   ```bash
-   ./verify_calippo_installation.sh
-   ```
-
-2. **Revisar logs del sistema**:
-   ```bash
-   sudo journalctl -u calippo.service --no-pager
-   ```
-
-3. **Reinstalar si es necesario**:
-   ```bash
-   sudo systemctl stop calippo.service
-   sudo systemctl disable calippo.service
-   ./install_calippo_factory.sh
-   ```
-
----
-
-**¡El sistema está listo para funcionar en fábrica de forma completamente autónoma!** 🎉
-
----
 
 ## 🧭 RESUMEN DE SCRIPTS Y CUÁNDO USARLOS
 
-- **base_setup_system.sh** (root): instala/asegura CUDA 11.4, cuDNN 8.6, TensorRT 8.5.2, OpenCV del sistema, dependencias y variables de entorno; habilita `logrotate.timer`.
+- **install_base_setup_system.sh** (root): instala/asegura CUDA 11.4, cuDNN 8.6, TensorRT 8.5.2, OpenCV del sistema, dependencias y variables de entorno; habilita `logrotate.timer`.
   - Uso:
     ```bash
-    sudo /home/nvidia/Desktop/Calippo_jetson/base_setup_system.sh
+    sudo /home/nvidia/Desktop/Calippo_jetson/install_base_setup_system.sh
     ```
 
-- **install_pytorch_jetson.sh** (usuario normal): instala PyTorch 2.0.0+nv23.05 y torchvision compatibles en la `.venv` del proyecto. Usa wheel local si existe en `/home/nvidia/tmp_jp/`.
+- **install_pytorch_jetson.sh** (usuario normal): instala PyTorch 2.0.0+nv23.05 y torchvision compatibles en la `.venv` del proyecto.
   - Uso:
     ```bash
     /home/nvidia/Desktop/Calippo_jetson/install_pytorch_jetson.sh
     ```
 
-- **install_aravis.sh** (root): intenta instalar Aravis 0.8 por paquetes; si no están, compila e instala desde fuente.
+- **install_aravis.sh** (root): instala Aravis 0.6 por paquetes.
   - Uso:
     ```bash
     sudo /home/nvidia/Desktop/Calippo_jetson/install_aravis.sh
     ```
 
-- **install_calippo_factory.sh** (usuario normal): configura autoarranque (`systemd`), `rsyslog`, `logrotate`, directorios/permisos de logs, cron, y prueba el servicio.
+- **install_vision_factory.sh** (usuario normal): configura autoarranque (`systemd`), directorios/permisos de logs, activa `LOG_*` y prueba el servicio.
   - Uso:
     ```bash
-    /home/nvidia/Desktop/Calippo_jetson/install_calippo_factory.sh
+    /home/nvidia/Desktop/Calippo_jetson/install_vision_factory.sh
     ```
 
-- **verify_calippo_installation.sh** (usuario normal): verificaciones post-instalación (servicio, logs, espacio, proceso en ejecución) y prueba opcional de reinicio.
+- **verify_calippo_installation.sh** (usuario normal): verificaciones post-instalación (servicio, logs, espacio, proceso en ejecución).
   - Uso:
     ```bash
     /home/nvidia/Desktop/Calippo_jetson/verify_calippo_installation.sh
     ```
 
-- **run_calippo.sh** (no ejecutar manualmente en producción): lanzador que usa el servicio `systemd`.
+- **run_calippo.sh** (no ejecutar manualmente en producción): lanzador local para debug.
 
 ### Orden recomendado (equipo de fábrica, JetPack 5.1.1 limpio)
 1. CUDA/cuDNN/TensorRT y deps del SO:
    ```bash
-   sudo /home/nvidia/Desktop/Calippo_jetson/base_setup_system.sh
+   sudo /home/nvidia/Desktop/Calippo_jetson/install_base_setup_system.sh
    ```
 2. PyTorch en la `.venv` del proyecto:
    ```bash
@@ -286,48 +245,59 @@ Si encuentras problemas:
    ```
 4. Autoarranque + logs:
    ```bash
-   /home/nvidia/Desktop/Calippo_jetson/install_calippo_factory.sh
+   /home/nvidia/Desktop/Calippo_jetson/install_vision_factory.sh
    /home/nvidia/Desktop/Calippo_jetson/verify_calippo_installation.sh
-   sudo reboot
    ```
 
-### ¿Hace falta contraseña (sudo)?
-### Verificación final
+## 📎 Anexo: Referencia técnica (plataforma y versiones)
 
+### Plataforma validada
+- JetPack: 5.1.1 (L4T R35.3.x)
+- Kernel: 5.10.104-tegra (aarch64)
+- Ubuntu: 20.04 LTS
+- Python: 3.8.x
+
+### NVIDIA stack
+- CUDA Toolkit: 11.4 (`/usr/local/cuda`)
+- cuDNN: 8.6 (`libcudnn8{,-dev}`)
+- TensorRT: 8.5 (`tensorrt{,-dev}`, `libnvinfer8`)
+
+### Librerías de la app
+- PyTorch: 2.0.0+nv23.05 (Jetson wheel)
+- TorchVision: 0.15.x compatible con la anterior
+- OpenCV (sistema): 4.2 (`python3-opencv`)
+- Aravis: 0.6 (paquetes `gir1.2-aravis-0.6 libaravis-0.6-0 aravis-tools`)
+
+### Dependencias (apt)
+- build-essential cmake git wget curl unzip pkg-config
+- python3 python3-pip python3-venv python3-dev
+- libjpeg-dev libpng-dev libtiff-dev libavcodec-dev libavformat-dev libswscale-dev
+- libgtk-3-dev libcanberra-gtk3-module
+- gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+- python3-opencv ffmpeg
+
+### Entorno (sugerido en `~/.bashrc`)
+- `CUDA_HOME=/usr/local/cuda`
+- `PATH=$CUDA_HOME/bin:$PATH`
+- `LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH`
+- Jetson perf (opcional): `OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`, `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128`
+
+### Variables del servicio
+- `HEADLESS=1`, `AUTO_RUN=1`
+- `PYTHONPATH=/home/nvidia/Desktop/Calippo_jetson/gentl`
+- `CONFIG_YOLO=/home/nvidia/Desktop/Calippo_jetson/gentl/config_yolo.yaml`
+- `LOG_TO_SYSLOG=0|1`, `LOG_TO_FILE=1`, `LOG_DIR=/var/log/calippo`
+
+### Chequeos rápidos
 ```bash
-# NVIDIA / CUDA
 nvcc --version
 ldconfig -p | grep libcudnn
-
-# PyTorch / NumPy / OpenCV
 cd /home/nvidia/Desktop/Calippo_jetson/gentl && source .venv/bin/activate
 python - <<'PY'
-import numpy as np, torch, cv2
-print('numpy', np.__version__)
+import torch, cv2
 print('torch', torch.__version__, 'cuda', torch.cuda.is_available())
 print('opencv', cv2.__version__)
 PY
-
-# Aravis 0.6
-python -c "import gi; gi.require_version('Aravis','0.6'); from gi.repository import Aravis; print('Aravis 0.6 OK')"
-dpkg -l | grep aravis
-
-# Servicio
-systemctl status vision-app.service --no-pager || systemctl status calippo.service --no-pager
-
-# Logs
-ls -la /var/log/calippo/system
-tail -n 50 /var/log/calippo/system/calippo_jetson.log
+python -c "import gi; gi.require_version('Aravis','0.6'); from gi.repository import Aravis as A; A.update_device_list(); print('Cámaras:', A.get_n_devices())"
+systemctl status vision-app.service --no-pager
 ```
-- Sí, para scripts que modifican el sistema: `base_setup_system.sh`, `install_aravis.sh`, y algunas operaciones internas de `install_calippo_factory.sh`.
-- El resto se ejecutan como usuario normal.
-
-Opcional: habilitar sudo sin contraseña para comandos concretos (recomendado solo en equipos de producción cerrados):
-```bash
-echo "nvidia ALL=(ALL) NOPASSWD: /usr/bin/apt, /usr/bin/systemctl, /usr/bin/ldconfig, /usr/bin/tee, /usr/bin/touch, /bin/mkdir, /bin/chown, /bin/chmod" | sudo tee /etc/sudoers.d/calippo-nopasswd
-sudo chmod 440 /etc/sudoers.d/calippo-nopasswd
-```
-
-### ¿Sobra algún script?
-- No. Cada uno cubre una fase diferente: base del SO, ML (PyTorch), cámara (Aravis), y despliegue (autoarranque/logs/verificación).
-- Si el equipo ya trae CUDA/cuDNN/TensorRT correctos, puedes saltarte `base_setup_system.sh`.

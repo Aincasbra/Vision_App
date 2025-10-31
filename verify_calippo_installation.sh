@@ -183,15 +183,15 @@ check_launcher() {
 check_running_process() {
     print_status "Verificando proceso en ejecución..."
     
-    # Buscar proceso de PruebaAravis
-    local process_count=$(ps aux | grep -E "(PruebaAravis|python.*PruebaAravis)" | grep -v grep | wc -l)
+    # Buscar proceso de la app modular
+    local process_count=$(ps aux | grep -E "python.*(/home/.*/Calippo_jetson/main\.py|-m +gentl\.app|gentl/app\.py)" | grep -v grep | wc -l)
     
     if [[ "$process_count" -gt 0 ]]; then
         print_success "✓ Proceso Calippo ejecutándose ($process_count proceso(s))"
         
         # Mostrar información del proceso
         echo "   Detalles del proceso:"
-        ps aux | grep -E "(PruebaAravis|python.*PruebaAravis)" | grep -v grep | while read line; do
+        ps aux | grep -E "python.*(/home/.*/Calippo_jetson/main\.py|-m +gentl\.app|gentl/app\.py)" | grep -v grep | while read line; do
             echo "   $line"
         done
     else
@@ -305,7 +305,7 @@ show_summary() {
     
     # Uso de recursos
     echo "💾 Uso de recursos:"
-    ps aux | grep -E "(PruebaAravis|python.*PruebaAravis)" | grep -v grep || echo "Proceso no encontrado"
+    ps aux | grep -E "python.*(/home/.*/Calippo_jetson/main\.py|-m +gentl\.app|gentl/app\.py)" | grep -v grep || echo "Proceso no encontrado"
     echo ""
     
     # Espacio en disco

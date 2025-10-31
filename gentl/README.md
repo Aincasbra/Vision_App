@@ -1,77 +1,173 @@
-# 🎯 App YOLO + Aravis (PruebaAravis) – Guía de uso específica
+# 🎯 gentl – Vision App (YOLO + Aravis)
 
-## 📋 Descripción
+Este directorio contiene la aplicación modular de visión por computador para Jetson (YOLO + cámaras GenICam vía Aravis).
 
-Sistema de detección de objetos en tiempo real con YOLO y cámaras GenICam (Aravis), optimizado para Jetson Orin. Esta guía se centra en la UI, ajustes y flujos internos de `PruebaAravis.py`.
+## 📦 Estructura (arquitectura)
+- `app.py`: orquestador. Crea contexto, carga settings, inicializa cámara, modelo e hilos.
+- `core/`
+  - `settings.py`: configuración central (YAML + env: `HEADLESS`, `AUTO_RUN`, `CONFIG_YOLO`).
+  - `logging.py`: logging multi-dominio (`system`/`vision`/`images`/`io`) → journald y ficheros (si `LOG_TO_FILE=1`).
+  - `device_manager.py`: apertura de cámara y aplicación de nodos base (PixelFormat, ROI, Exposure/Gain, etc.).
+  - `recording.py`: grabación y gestor de imágenes (`ImagesManager`: bad/good, `images.csv`, archivado diario a `archive/`).
+- `vision/`
+  - `yolo_wrapper.py`: carga del modelo Ultralytics.
+  - `yolo_service.py`: hilo de inferencia; publica resultados y registra `vision_log.csv` por detección (exposición, ganancia, resolución, umbral, bbox).
+  - `overlay.py`, `ops.py`, `tracking.py`: visualización y utilidades.
+- `camera/`
+  - `camera_service.py`: `safe_get/safe_set` y helpers ROI.
+- `ui/`
+  - `window.py`, `panel.py`, `handlers.py`, `app_controller.py`: UI OpenCV (INFO/CONFIG modales y robustas en Jetson).
 
-## 📦 Arranque rápido (recordatorio)
+
+
+## Arquitectura modular de `gentl`
+
+### Objetivo
+Diseño modular, mantenible y robusto que conserva funcionalidad original (INFO/CONFIG/YOLO/recording) y soporta ejecución headless vía systemd.
+
+### Orquestador
+- `app.py`
+  - Crea `AppContext` y carga `Settings`.
+  - Aplica optimizaciones globales (vía `core/optimizations.py`).
+  - Inicializa cámara (`core/device_manager.py`).
+  - Carga modelos (`vision/yolo_wrapper.py`) y arranca `YoloService`.
+  - Ejecuta el bucle principal: captura, compone UI, aplica overlays y procesa eventos mediante `ui/app_controller.py`.
+  - Mantiene estado ligero de UI (gamma/patrón actual) y flags de indicadores (AWB/AutoCal).
+
+### Configuración
+- `core/settings.py`
+  - `load_settings()`: fusiona YAML (`config_yolo.yaml`) y variables de entorno (`HEADLESS`, `AUTO_RUN`).
+  - `Settings`: expone `raw_config`, `headless`, `auto_run`, `yolo`.
+- `config_yolo.yaml`
+  - `yolo.model_path|model`, `image_size`, `confidence_threshold`, `iou_threshold`, `classes`.
+  
+
+### Logging y trazabilidad
+
+`core/logging.py` expone loggers por dominio (misma API info/warning/error/debug):
+- `system` (logger por defecto `gentl`): ciclo de vida y estado.
+- `vision`: telemetría por lata y métricas de inferencia.
+- `images`: guardado de imágenes “bad” y “good” + CSV por día y archivado.
+- `io`: salidas digitales/PLC (preparado; activo cuando haya hardware).
+
+Handlers configurables por entorno:
+- `LOG_TO_SYSLOG=1` (default): al journal (systemd).
+- `LOG_TO_FILE=1`: a ficheros bajo `LOG_DIR` (default `/var/log/calippo`).
+- `LOG_DIR=/var/log/calippo`, `LOG_LEVEL=INFO`.
+
+Estructura de `/var/log/calippo/`:
+- `system/system.log`: log de sistema (si `LOG_TO_FILE=1`).
+- `vision/vision_log.csv`: por detección → `ts,frame_id,num_boxes,classes,avg_conf,proc_ms,camera_exposure,camera_gain,width,height,yolo_threshold,bbox`.
+- `images/YYYY-MM-DD/`: JPG “bad” por detección y “good” periódicas + `images.csv` (ts,tipo,path,reason,avg_conf,class,track_id).
+- `archive/`: ZIPs diarios de `images/YYYY-MM-DD`.
+- `io/` o `digital/` (legacy): eventos de IO.
+- `photosmanual/` (opcional): capturas manuales.
+
+
+### Cámara
+- `core/device_manager.py`
+  - `DeviceManager.open_camera()`: abre backend (Aravis), aplica setup básico (PixelFormat/Trigger/FPS/Expo/Gain/AWB).
+  - `stop_camera()`: paro seguro.
+- `camera/camera_service.py`
+  - `safe_get/safe_set`: acceso resiliente a nodos GenICam.
+  - `set_roi/restore_full_frame`: gestión de ROI y restauración a frame completo.
+
+### Inferencia y visión
+- `vision/yolo_wrapper.py`: wrapper del modelo YOLO (CUDA cuando disponible).
+- `vision/yolo_service.py`: hilo de inferencia; lee `builtins.latest_frame`, publica resultados en `context.infer_queue`.
+- `vision/overlay.py`: dibuja detecciones y HUD; consume `context.infer_queue` con TTL para evitar parpadeos; HUD de cámara (ET/FPS) seguro.
+- `vision/image_utils.py`: utilidades (gamma, etc.).
+- `vision/ops.py|tracking.py`: operaciones auxiliares y asignación de IDs estables (usadas dentro de overlay/servicios).
+
+### UI
+- `ui/window.py`: creación/destrucción de ventana, pintado de frame con panel, pantalla negra inicial.
+- `ui/panel.py`: composición del panel lateral y detección de clics (zonas RUN/STOP/CONFIG/INFO, etc.).
+- `ui/handlers.py`: lógica de acciones del panel (RUN/STOP/INFO/CONFIG/AWB/AUTO_CAL/RECORD_60S). INFO/CONFIG son modales y robustos.
+- `ui/app_controller.py`: capa fina que consume la cola de eventos y delega en `handlers`; gestiona callback de ratón.
+- `ui/indicators.py`: overlays visuales (AWB/AutoCal) sincronizados con flags de `App`.
+
+### Optimización y logging
+- `core/optimizations.py`: aplica optimizaciones SO/CUDA/OpenCV/PyTorch; devuelve (conf, iou) YOLO desde settings.
+- `core/logging.py`: logger multi-dominio (system/vision/images/io) con Syslog y file handlers opcionales.
+
+### Grabación e imágenes
+- `core/recording.py`:
+  - `Recorder`: grabación de vídeo + overlay de estado.
+  - `ImagesManager`: guarda imágenes “bad” por detección y “good” periódicas, mantiene `images.csv` y archiva cada día.
+
+### Concurrencia y colas
+- Hilos:
+  - `YoloService` (daemon): consume frames y publica resultados.
+  - INFO/CONFIG: modales en hilo principal para estabilidad GTK/X en Jetson.
+- Colas:
+  - `context.evt_queue`: acciones de UI (RUN/STOP/CONFIG/INFO/...).
+  - `context.infer_queue`: resultados YOLO para overlay.
+
+### Flags de ejecución
+- `HEADLESS=1`: no crea UI, auto-enfila `RUN`.
+- `AUTO_RUN=1`: auto-enfila `RUN` aunque exista UI.
+
+### Systemd (headless)
+- Unidad: `vision-app.service`.
+- `WorkingDirectory`: `/home/nvidia/Desktop/Calippo_jetson`.
+- `ExecStart`: `/home/nvidia/Desktop/Calippo_jetson/gentl/.venv/bin/python /home/nvidia/Desktop/Calippo_jetson/main.py`.
+- `Environment` típico:
+  - `HEADLESS=1`, `AUTO_RUN=1`.
+  - `PYTHONPATH=/home/nvidia/Desktop/Calippo_jetson/gentl`.
+  - `CONFIG_YOLO=/home/nvidia/Desktop/Calippo_jetson/gentl/config_yolo.yaml`.
+  - `LOG_TO_SYSLOG=0|1`, `LOG_TO_FILE=1`, `LOG_DIR=/var/log/calippo`.
+- Operación:
+  - `systemctl status --no-pager vision-app`
+  - `sudo journalctl -u vision-app -f --no-pager`
+  - Ficheros (si activos): `tail -f /var/log/calippo/vision/vision_log.csv`, `tail -f /var/log/calippo/system/system.log`.
+
+  
+## ⚙️ Configuración
+- YAML: `gentl/config_yolo.yaml` (recomendado usar ruta absoluta en `yolo.model|model_path`).
+- Env opcionales (servicio/systemd):
+  - `HEADLESS=1`, `AUTO_RUN=1`
+  - `CONFIG_YOLO=/home/nvidia/Desktop/Calippo_jetson/gentl/config_yolo.yaml`
+  - `LOG_TO_SYSLOG=0|1`, `LOG_TO_FILE=1`, `LOG_DIR=/var/log/calippo`
+
+## 🖥️ Uso
+### UI (debug local)
 ```bash
-sudo systemctl stop vision-app.service
+sudo systemctl stop vision-app.service   # liberar cámara
+cd /home/nvidia/Desktop/Calippo_jetson/gentl && source .venv/bin/activate
 export HEADLESS=0
-python3 PruebaAravis.py
+python /home/nvidia/Desktop/Calippo_jetson/main.py
 ```
+Controles: RUN/STOP, CONFIG/INFO (sliders exposición/ganancia/FPS; cierre limpio con ESC/ENTER/X), Gamma, Bayer, RECORD, AWB Once, AutoCal.
 
-## 🖥️ UI: Paneles y controles
-La ventana principal tiene imagen de cámara (izquierda) y panel lateral (derecha).
-
-- RUN/STOP: iniciar/detener captura y detección.
-- GRABAR 60s: guarda frames y ensambla vídeo (si hay ffmpeg).
-- Gamma: deslizador; aplica LUT en software y en HW si la cámara soporta Gamma.
-- Bayer (BG/RG/GR/GB): cambia demosaico y, en reposo, intenta ajustar PixelFormat en cámara.
-- YOLO Confidence: umbral de confianza (típico 0.25–0.60).
-- YOLO IOU: umbral NMS IOU (típico 0.40–0.50).
-- Clasificador:
-  - Confianza: umbral para marcar “Mala” en modo CONSERVADOR.
-  - Modo: CONSERVADOR/NORMAL.
-- INFO: ventana de sólo lectura con parámetros de cámara (PixelFormat, FPS, Exposure, Gain, Gamma, ROI...).
-- CONFIG: ventana editable con sliders para Exposición, Ganancia y FPS, y toggles AUTO.
-- AWB ONCE: auto-balance de blancos una vez; se desactiva al terminar.
-- AUTO CAL: activa AUTO (exposición/ganancia/balance) brevemente y fija los valores resultantes.
-
-Atajos en CONFIG:
-- T: TriggerMode On/Off si existe.
-- A/G: ExposureAuto/GainAuto.
-- ENTER/ESC: aceptar/cancelar.
-
-Indicadores en imagen:
-- Overlays YOLO (cajas, IDs estables) y HUD de latencia/FPS.
-- Indicador REC con cuenta atrás durante la grabación.
-
-## ⚙️ Ajustes recomendados
-- YOLO Confidence: sube para menos falsos positivos; baja para detectar más.
-- IOU NMS: alto para suprimir solapes; bajo para permitir más cajas.
-- Exposición/Ganancia: balancea blur/ruido (p.ej., ~5ms + 24dB en líneas rápidas).
-- Gamma: mejora contraste; aplica en HW si la cámara lo soporta.
-- Clasificador: modo CONSERVADOR exige alta confianza para “Mala”.
-
-## 🔄 Flujo interno (resumen)
-1) Captura (AravisBackend): configura ROI y obtiene el último frame (latest-frame) con demosaico Bayer→BGR.
-2) Preprocesado: LUT de gamma y/o ROI de inferencia.
-3) YOLO: detección (Ultralytics), NMS, fusión de solapes; parámetros ajustables (conf, iou, imgsz).
-4) Tracking: IDs estables por similitud/IoU; persistencia breve anti-parpadeo.
-5) Clasificación por lata: ROI circular, modelo PyTorch; guarda imagen si “Mala”.
-6) Logging: por lata (CSV/JSONL), eventos del sistema y snapshots/defects.
-7) Headless/Servicio: HEADLESS=1 con watchdog via systemd.
-
-## 🧪 Verificaciones rápidas
+### Headless (producción)
+El servicio `vision-app.service` arranca la app en continuo (sin UI).
 ```bash
-# PyTorch
-python3 - <<'PY'
-import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())
-PY
-# Aravis 0.6
-python3 -c "import gi; gi.require_version('Aravis','0.6'); from gi.repository import Aravis; print('Aravis OK')"
-# Cámaras
-python3 -c "import gi; gi.require_version('Aravis','0.6'); from gi.repository import Aravis; Aravis.update_device_list(); print('Cámaras:', Aravis.get_n_devices())"
+sudo systemctl start vision-app.service
+sudo systemctl enable vision-app.service
+systemctl status --no-pager vision-app
+sudo journalctl -u vision-app -f --no-pager
 ```
 
-## 📁 Archivos relevantes
-- `PruebaAravis.py`: aplicación principal
-- `config_yolo.yaml`: configuración de modelo/umbrales
-- `requirements.jetson.txt`: dependencias pip (sin OpenCV)
-- `diagnostico_jetpack511.py`: diagnóstico del sistema
+## 📝 Logging (dominios y ficheros)
+- Dominios (`core/logging.py`): `system` (gentl), `vision`, `images`, `io`.
+- Journal (filtrado):
+```bash
+sudo journalctl -u vision-app --no-pager | grep " gentl:"
+sudo journalctl -u vision-app --no-pager | grep " vision:"
+sudo journalctl -u vision-app --no-pager | grep " images:"
+```
+- Ficheros (si `LOG_TO_FILE=1` y `LOG_DIR=/var/log/calippo`):
+  - `vision/vision_log.csv`: por detección → `ts,frame_id,num_boxes,classes,avg_conf,proc_ms,camera_exposure,camera_gain,width,height,yolo_threshold,bbox`.
+  - `images/YYYY-MM-DD/images.csv` + JPGs bad/good; zip diario en `archive/`.
+  - `system/system.log`: estado/arranque.
 
-## 🐛 Problemas frecuentes
-- Sin cámaras: verifica conexión y `Aravis.get_n_devices()`.
-- Pocos FPS: baja resolución/YOLO imgsz; ajusta exposición/ganancia.
-- Detecciones inestables: sube IOU o Confidence; usa modo CONSERVADOR en clasificador.
+## 🔧 Ajustes de cámara al inicio
+`core/device_manager.py` aplica nodos base: `PixelFormat=BayerBG8`, `Trigger=Off`, `FPS≈15`, `ExposureAuto/Mode=Off/Timed`, `ExposureTime` y `Gain` (valores de arranque editables en código; el log imprime los efectivos). 
+
+## 🧪 Diagnóstico rápido
+```bash
+python - <<'PY'
+import torch, cv2; print('torch', torch.__version__, 'cuda', torch.cuda.is_available()); print('opencv', cv2.__version__)
+PY
+python -c "import gi; gi.require_version('Aravis','0.6'); from gi.repository import Aravis as A; A.update_device_list(); print('Cam:', A.get_n_devices())"
+```

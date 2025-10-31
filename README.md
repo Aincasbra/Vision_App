@@ -42,10 +42,10 @@ Sigue la guía completa: `GUIA_INSTALACION_FABRICA.md`.
 
 Orden recomendado:
 ```bash
-sudo /home/nvidia/Desktop/Calippo_jetson/base_setup_system.sh
+sudo /home/nvidia/Desktop/Calippo_jetson/install_base_setup_system.sh
 /home/nvidia/Desktop/Calippo_jetson/install_pytorch_jetson.sh
 sudo /home/nvidia/Desktop/Calippo_jetson/install_aravis.sh   # si faltara Aravis 0.6
-/home/nvidia/Desktop/Calippo_jetson/install_calippo_factory.sh
+/home/nvidia/Desktop/Calippo_jetson/install_vision_factory.sh
 /home/nvidia/Desktop/Calippo_jetson/verify_calippo_installation.sh
 ```
 
@@ -54,13 +54,15 @@ sudo /home/nvidia/Desktop/Calippo_jetson/install_aravis.sh   # si faltara Aravis
 ```
 Calippo_jetson/
 ├── 🎯 gentl/                    # App principal YOLO + Aravis + logging
-│   ├── PruebaAravis.py          # Script principal
+│   ├── app.py                   # Orquestador
 │   ├── config_yolo.yaml         # Configuración YOLO
-│   ├── requirements.jetson.txt  # Requisitos pip (sin OpenCV)
-│   ├── diagnostico_jetpack511.py# Diagnóstico del sistema
-│   ├── config_yolo.yaml         # Configuración de modelo YOLO
-│   └── README.md                # Descripción de flujos y modelos
-└── 📋 README.md                 # Este archivo
+│   ├── vision/                  # YoloService, overlay, wrapper
+│   ├── core/                    # logging, device_manager, settings, recording
+│   └── ui/                      # panel, handlers, ventanas
+├── install_base_setup_system.sh # Setup SO base
+├── install_pytorch_jetson.sh    # PyTorch en venv
+├── install_vision_factory.sh    # Servicio systemd + logs
+└── README.md                    # Este archivo
 ```
 
 ## 🎮 Uso
@@ -72,7 +74,7 @@ sudo systemctl stop vision-app.service
 
 # Lanza con UI (HEADLESS desactivado)
 export HEADLESS=0
-python /home/nvidia/Desktop/Calippo_jetson/gentl/PruebaAravis.py
+python /home/nvidia/Desktop/Calippo_jetson/main.py
 ```
 
 ### Modo continuo (fábrica)
@@ -82,11 +84,19 @@ sudo systemctl start vision-app.service
 sudo systemctl enable vision-app.service
 
 # Verificación que funciona y loggea
-systemctl status vision-app.service --no-pager
-sudo journalctl -u vision-app.service -f
-tail -f /var/log/calippo/system/calippo_jetson.log
-tail -f /var/log/calippo/system/calippo_jetson_metrics.log
+systemctl status --no-pager vision-app
+sudo journalctl -u vision-app -f --no-pager
+
+# Logs por dominio (journal)
+sudo journalctl -u vision-app --no-pager | grep " gentl:"
+sudo journalctl -u vision-app --no-pager | grep " vision:"
+sudo journalctl -u vision-app --no-pager | grep " images:"
+sudo journalctl -u vision-app --no-pager | grep " io:"
+
+# Logs en ficheros (si LOG_TO_FILE=1)
+tail -f /var/log/calippo/system/system.log
 tail -f /var/log/calippo/vision/vision_log.csv
+tail -f /var/log/calippo/images/$(date +%F)/images.csv
 
 # Prueba de reinicio (opcional)
 sudo reboot
