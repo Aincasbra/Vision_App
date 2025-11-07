@@ -2,6 +2,10 @@
 
 Sistema de visión en tiempo real para Jetson Orin con detección YOLO, cámaras GenICam vía Aravis, logging industrial y autoarranque en fábrica.
 
+> **📚 Documentación**: 
+> - **`vision_app/README.md`**: Documentación técnica detallada (arquitectura, módulos, API)
+> - **`GUIA_INSTALACION_FABRICA.md`**: Guía completa de instalación paso a paso
+
 ## 🚀 Características Principales
 
 - **🤖 Detección YOLO v8** con modelo personalizado
@@ -40,30 +44,69 @@ Sistema de visión en tiempo real para Jetson Orin con detección YOLO, cámaras
 
 Sigue la guía completa: `GUIA_INSTALACION_FABRICA.md`.
 
-Orden recomendado:
+### Scripts de Instalación
+
+1. **`install_base_setup_system.sh`** (requiere sudo)
+   - Instala CUDA 11.4, cuDNN 8.6, TensorRT 8.5.2
+   - Configura dependencias del sistema
+   - Habilita variables de entorno
+
+2. **`install_pytorch_jetson.sh`** (usuario normal)
+   - Instala PyTorch 2.0.0+nv23.05 y TorchVision en `.venv`
+   - Configura entorno virtual del proyecto
+
+3. **`install_aravis.sh`** (requiere sudo, opcional)
+   - Instala Aravis 0.6 (paquetes del sistema)
+   - Solo necesario si Aravis no está instalado
+
+4. **`install_vision_factory.sh`** (usuario normal)
+   - Crea servicio systemd `vision-app.service`
+   - Configura directorios de logs con permisos
+   - Habilita autoarranque
+
+5. **`verify_vision_installation.sh`** (usuario normal)
+   - Verifica instalación completa
+   - Comprueba servicio, logs y proceso
+
+### Orden de Ejecución Recomendado
+
 ```bash
+# 1. Base del sistema (CUDA, cuDNN, TensorRT)
 sudo /home/nvidia/Desktop/Calippo_jetson/install_base_setup_system.sh
+
+# 2. PyTorch en venv
 /home/nvidia/Desktop/Calippo_jetson/install_pytorch_jetson.sh
-sudo /home/nvidia/Desktop/Calippo_jetson/install_aravis.sh   # si faltara Aravis 0.6
+
+# 3. Aravis (solo si falta)
+sudo /home/nvidia/Desktop/Calippo_jetson/install_aravis.sh
+
+# 4. Servicio systemd y logs
 /home/nvidia/Desktop/Calippo_jetson/install_vision_factory.sh
-/home/nvidia/Desktop/Calippo_jetson/verify_calippo_installation.sh
+
+# 5. Verificación
+/home/nvidia/Desktop/Calippo_jetson/verify_vision_installation.sh
 ```
 
 ## 📁 Estructura
 
 ```
 Calippo_jetson/
-├── 🎯 gentl/                    # App principal YOLO + Aravis + logging
-│   ├── app.py                   # Orquestador
+├── 🎯 vision_app/                # App principal YOLO + Aravis + logging
+│   ├── app.py                   # Orquestador principal
+│   ├── main.py                  # Punto de entrada (systemd)
 │   ├── config_yolo.yaml         # Configuración YOLO
-│   ├── vision/                  # YoloService, overlay, wrapper, classifier
-│   ├── core/                    # logging, device_manager, settings, recording, timings
-│   ├── camera/                  # interface, selector, genicam_aravis_backend, onvif_rtsp_backend
-│   └── ui/                      # panel, handlers, ventanas
-├── install_base_setup_system.sh # Setup SO base
+│   ├── model/                   # Modelos ML (detección, clasificación, tracking)
+│   ├── core/                    # Módulos centrales (logging, settings, optimizations, recording)
+│   ├── camera/                  # Backends de cámara (GenICam/Aravis, ONVIF/RTSP)
+│   └── developer_ui/            # Interfaz de depuración (OpenCV)
+├── install_base_setup_system.sh # Setup SO base (CUDA, cuDNN, TensorRT)
 ├── install_pytorch_jetson.sh    # PyTorch en venv
+├── install_aravis.sh            # Instalación Aravis 0.6
 ├── install_vision_factory.sh    # Servicio systemd + logs
-└── README.md                    # Este archivo
+├── verify_vision_installation.sh # Verificación post-instalación
+├── README.md                    # Este archivo (visión general)
+├── GUIA_INSTALACION_FABRICA.md  # Guía completa de instalación
+└── vision_app/README.md         # Documentación técnica detallada
 ```
 
 ## 🎮 Uso
@@ -89,16 +132,16 @@ systemctl status --no-pager vision-app
 sudo journalctl -u vision-app -f --no-pager
 
 # Logs por dominio (journal)
-sudo journalctl -u vision-app --no-pager | grep " gentl:"
+sudo journalctl -u vision-app --no-pager | grep " vision_app:"
 sudo journalctl -u vision-app --no-pager | grep " vision:"
 sudo journalctl -u vision-app --no-pager | grep " images:"
 sudo journalctl -u vision-app --no-pager | grep " io:"
 
 # Logs en ficheros (si LOG_TO_FILE=1)
-tail -f /var/log/calippo/system/system.log
-tail -f /var/log/calippo/vision/vision_log.csv
-tail -f /var/log/calippo/images/$(date +%F)/images.csv
-tail -f /var/log/calippo/timings/timings_log.csv
+tail -f /var/log/vision_app/system/system.log
+tail -f /var/log/vision_app/vision/vision_log.csv
+tail -f /var/log/vision_app/images/$(date +%F)/images.csv
+tail -f /var/log/vision_app/timings/timings_log.csv
 
 # Prueba de reinicio (opcional)
 sudo reboot
@@ -152,19 +195,19 @@ Editar `config_yolo.yaml` para personalizar:
 - **Métricas de sistema**
 
 
-### **Rendimiento lento**
+### **Troubleshooting**
+
+**Rendimiento lento:**
 - Verificar que PyTorch esté optimizado
 - Reducir resolución de cámara
 - Usar modelo YOLO más pequeño
 
-### **Verificación del sistema**
-```bash
-# Ejecutar diagnóstico completo
-python3 diagnostico_completo.py
+**Cámara no detectada:**
+- Verificar permisos: `ls -l /dev/video*`
+- Revisar logs: `sudo journalctl -u vision-app.service -n 50`
+- Verificar que el servicio esté detenido si se usa UI: `sudo systemctl stop vision-app.service`
 
-# Verificar replicación
-python3 verificar_replicacion.py
-```
+**Más información:** Consulta `vision_app/README.md` para troubleshooting detallado y arquitectura completa.
 
 
 ## 🔄 Sistema de Autoarranque y Logging
@@ -186,12 +229,12 @@ python3 verificar_replicacion.py
 Cada categoría soporta niveles: `debug`, `info`, `warning`, `error`, `critical`
 - **Rotación automática**: Logs se comprimen diariamente
 - **Retención**: 30 días de historial
-- **Ubicación**: `/var/log/calippo/` organizados por categoría
+- **Ubicación**: `/var/log/vision_app/` organizados por categoría
 
 ## 📚 Documentación Adicional
 
-- **`gentl/README.md`**: Flujos, módulos y capa de cámaras (selector/backends)
-- **`GUIA_INSTALACION_FABRICA.md`**: Guía completa de instalación paso a paso
+- **`vision_app/README.md`**: Documentación técnica detallada de la aplicación (arquitectura, módulos, API)
+- **`GUIA_INSTALACION_FABRICA.md`**: Guía completa de instalación paso a paso para fábrica
 
 ## 🤝 Contribuir
 

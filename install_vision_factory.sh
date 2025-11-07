@@ -19,10 +19,10 @@ err(){ echo -e "${RED}[ERR]${NC} $1"; }
 
 PROJECT_DIR="/home/nvidia/Desktop/Calippo_jetson"
 SERVICE_NAME="vision-app.service"
-PYTHON_BIN="$PROJECT_DIR/gentl/.venv/bin/python"
+PYTHON_BIN="$PROJECT_DIR/vision_app/.venv/bin/python"
 ENTRYPOINT="$PROJECT_DIR/main.py"
-LOG_DIR="/var/log/calippo"
-YOLO_CFG="$PROJECT_DIR/gentl/config_yolo.yaml"
+LOG_DIR="/var/log/vision_app"
+YOLO_CFG="$PROJECT_DIR/vision_app/config_yolo.yaml"
 
 require(){ command -v "$1" >/dev/null 2>&1 || { err "Falta comando $1"; exit 1; }; }
 
@@ -51,7 +51,7 @@ WorkingDirectory=$PROJECT_DIR
 ExecStart=$PYTHON_BIN $ENTRYPOINT
 Environment=HEADLESS=1
 Environment=AUTO_RUN=1
-Environment=PYTHONPATH=$PROJECT_DIR/gentl
+Environment=PYTHONPATH=$PROJECT_DIR/vision_app
 Environment=CONFIG_YOLO=$YOLO_CFG
 Environment=LOG_TO_SYSLOG=0
 Environment=LOG_TO_FILE=1

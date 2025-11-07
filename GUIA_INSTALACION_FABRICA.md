@@ -1,4 +1,4 @@
-# 🚀 GUÍA DE INSTALACIÓN CALIPPO PARA FÁBRICA
+# 🚀 GUÍA DE INSTALACIÓN VISION APP PARA FÁBRICAAP
 
 ## 📋 INSTRUCCIONES PASO A PASO
 
@@ -38,9 +38,9 @@
 
 3. **Verificar que tienes los archivos necesarios**
    ```bash
-   ls -la gentl/app.py
+   ls -la vision_app/app.py
    ls -la install_vision_factory.sh
-   ls -la verify_calippo_installation.sh
+   ls -la verify_vision_installation.sh
    ```
 
 ### **PASO 2: EJECUTAR INSTALACIÓN AUTOMÁTICA**
@@ -62,7 +62,7 @@
 
 1. **Ejecutar script de verificación**
    ```bash
-   ./verify_calippo_installation.sh
+   ./verify_vision_installation.sh
    ```
 
 2. **El script verificará:**
@@ -111,15 +111,15 @@ sudo systemctl reload vision-app.service     # Recargar configuración
 ```bash
 sudo journalctl -u vision-app -f --no-pager
 # Filtrado por dominios
-sudo journalctl -u vision-app --no-pager | grep " gentl:"
+sudo journalctl -u vision-app --no-pager | grep " vision_app:"
 sudo journalctl -u vision-app --no-pager | grep " vision:"
 sudo journalctl -u vision-app --no-pager | grep " images:"
 sudo journalctl -u vision-app --no-pager | grep " io:"
 # Ficheros si LOG_TO_FILE=1
-tail -f /var/log/calippo/system/system.log
-tail -f /var/log/calippo/vision/vision_log.csv
-tail -f /var/log/calippo/images/$(date +%F)/images.csv
-tail -f /var/log/calippo/timings/timings_log.csv
+tail -f /var/log/vision_app/system/system.log
+tail -f /var/log/vision_app/vision/vision_log.csv
+tail -f /var/log/vision_app/images/$(date +%F)/images.csv
+tail -f /var/log/vision_app/timings/timings_log.csv
 ```
 
 ### **Logs Históricos**
@@ -137,14 +137,14 @@ top -b -n1 -p "$PID"
 
 ### **Espacio en Disco**
 ```bash
-df -h /var/log/calippo                  # Espacio usado por logs
-du -sh /var/log/calippo/*               # Tamaño por directorio
+df -h /var/log/vision_app                  # Espacio usado por logs
+du -sh /var/log/vision_app/*               # Tamaño por directorio
 ```
 
 ## 📁 ESTRUCTURA DE LOGS GENERADOS
 
 ```
-/var/log/calippo/
+/var/log/vision_app/
 ├── system/
 │   └── system.log                    # Logs de sistema (si LOG_TO_FILE=1)
 ├── io/
@@ -171,7 +171,7 @@ sudo systemctl restart vision-app.service      # Reiniciar servicio
 
 ### **Logs no se generan**
 ```bash
-ls -la /var/log/calippo/                    # Verificar permisos
+ls -la /var/log/vision_app/                    # Verificar permisos
 systemctl show vision-app -p Environment    # Ver variables LOG_*
 ```
 
@@ -184,7 +184,7 @@ sudo systemctl start vision-app.service
 ### **Espacio en disco lleno**
 ```bash
 df -h                                       # Verificar espacio
-sudo du -sh /var/log/calippo/*             # Ver tamaño de logs
+sudo du -sh /var/log/vision_app/*             # Ver tamaño de logs
 ```
 
 ## 🎯 VERIFICACIÓN FINAL
@@ -224,13 +224,13 @@ Después de la instalación, debe cumplirse:
     /home/nvidia/Desktop/Calippo_jetson/install_vision_factory.sh
     ```
 
-- **verify_calippo_installation.sh** (usuario normal): verificaciones post-instalación (servicio, logs, espacio, proceso en ejecución).
+- **verify_vision_installation.sh** (usuario normal): verificaciones post-instalación (servicio, logs, espacio, proceso en ejecución).
   - Uso:
     ```bash
-    /home/nvidia/Desktop/Calippo_jetson/verify_calippo_installation.sh
+    /home/nvidia/Desktop/Calippo_jetson/verify_vision_installation.sh
     ```
 
-- **run_calippo.sh** (no ejecutar manualmente en producción): lanzador local para debug.
+- **run_vision_app.sh** (no ejecutar manualmente en producción): lanzador local para debug.
 
 ### Orden recomendado (equipo de fábrica, JetPack 5.1.1 limpio)
 1. CUDA/cuDNN/TensorRT y deps del SO:
@@ -248,7 +248,7 @@ Después de la instalación, debe cumplirse:
 4. Autoarranque + logs:
    ```bash
    /home/nvidia/Desktop/Calippo_jetson/install_vision_factory.sh
-   /home/nvidia/Desktop/Calippo_jetson/verify_calippo_installation.sh
+   /home/nvidia/Desktop/Calippo_jetson/verify_vision_installation.sh
    ```
 
 ## 📎 Anexo: Referencia técnica (plataforma y versiones)
@@ -286,15 +286,15 @@ Después de la instalación, debe cumplirse:
 
 ### Variables del servicio
 - `HEADLESS=1`, `AUTO_RUN=1`
-- `PYTHONPATH=/home/nvidia/Desktop/Calippo_jetson/gentl`
-- `CONFIG_YOLO=/home/nvidia/Desktop/Calippo_jetson/gentl/config_yolo.yaml`
-- `LOG_TO_SYSLOG=0|1`, `LOG_TO_FILE=1`, `LOG_DIR=/var/log/calippo`
+- `PYTHONPATH=/home/nvidia/Desktop/Calippo_jetson/vision_app`
+- `CONFIG_YOLO=/home/nvidia/Desktop/Calippo_jetson/vision_app/config_yolo.yaml`
+- `LOG_TO_SYSLOG=0|1`, `LOG_TO_FILE=1`, `LOG_DIR=/var/log/vision_app`
 
 ### Chequeos rápidos
 ```bash
 nvcc --version
 ldconfig -p | grep libcudnn
-cd /home/nvidia/Desktop/Calippo_jetson/gentl && source .venv/bin/activate
+cd /home/nvidia/Desktop/Calippo_jetson/vision_app && source .venv/bin/activate
 python - <<'PY'
 import torch, cv2
 print('torch', torch.__version__, 'cuda', torch.cuda.is_available())

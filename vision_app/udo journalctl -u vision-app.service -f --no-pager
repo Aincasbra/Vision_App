@@ -1,0 +1,19 @@
+[0;1;32m●[0m vision-app.service - Vision App (headless)
+     Loaded: loaded (/etc/systemd/system/vision-app.service; enabled; vendor preset: enabled)
+     Active: [0;1;32mactive (running)[0m since Fri 2025-11-07 14:24:29 CET; 33s ago
+   Main PID: 1251478 (python)
+      Tasks: 6 (limit: 8481)
+     Memory: 1.9G
+     CGroup: /system.slice/vision-app.service
+             └─1251478 /home/nvidia/Desktop/Calippo_jetson/vision_app/.venv/bin/python /home/nvidia/Desktop/Calippo_jetson/main.py
+
+Nov 07 14:24:53 ubuntu vision-app[1251478]: 2025-11-07 14:24:53,890 INFO system: [YOLO] fps=38.3 boxes=0
+Nov 07 14:24:54 ubuntu vision-app[1251478]: 2025-11-07 14:24:54,902 INFO system: [YOLO] fps=38.5 boxes=0
+Nov 07 14:24:55 ubuntu vision-app[1251478]: 2025-11-07 14:24:55,915 INFO system: [YOLO] fps=38.5 boxes=0
+Nov 07 14:24:56 ubuntu vision-app[1251478]: 2025-11-07 14:24:56,938 INFO system: [YOLO] fps=38.1 boxes=0
+Nov 07 14:24:57 ubuntu vision-app[1251478]: 2025-11-07 14:24:57,953 INFO system: [YOLO] fps=38.5 boxes=0
+Nov 07 14:24:58 ubuntu vision-app[1251478]: 2025-11-07 14:24:58,963 INFO system: [YOLO] fps=38.6 boxes=0
+Nov 07 14:24:59 ubuntu vision-app[1251478]: 2025-11-07 14:24:59,973 INFO system: [YOLO] fps=38.6 boxes=0
+Nov 07 14:25:00 ubuntu vision-app[1251478]: 2025-11-07 14:25:00,992 INFO system: [YOLO] fps=38.3 boxes=0
+Nov 07 14:25:01 ubuntu vision-app[1251478]: 2025-11-07 14:25:01,998 INFO system: [YOLO] fps=38.8 boxes=0
+Nov 07 14:25:03 ubuntu vision-app[1251478]: 2025-11-07 14:25:03,011 INFO system: [YOLO] fps=38.5 boxes=0

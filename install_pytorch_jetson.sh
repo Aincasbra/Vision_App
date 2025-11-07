@@ -18,7 +18,7 @@ err(){ echo -e "${RED}[ERR]${NC} $1"; }
 if [[ $EUID -eq 0 ]]; then
   err "Ejecuta como usuario nvidia con sudo sólo cuando se pida"; exit 1; fi
 
-VENV_DIR="/home/nvidia/Desktop/Calippo_jetson/gentl/.venv"
+VENV_DIR="/home/nvidia/Desktop/Calippo_jetson/vision_app/.venv"
 PY="$VENV_DIR/bin/python"
 PIP="$VENV_DIR/bin/pip"
 

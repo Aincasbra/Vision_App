@@ -17,10 +17,10 @@ services:
       - CUDA_HOME=/usr/local/cuda
       - LD_LIBRARY_PATH=/usr/local/cuda/lib64
     volumes:
-      - /var/log/calippo:/var/log/calippo
+      - /var/log/vision_app:/var/log/vision_app
       - /tmp/.X11-unix:/tmp/.X11-unix # si alguna vez quieres UI
       # Monta wheels si quieres instalar torch en build/run:
       # - /home/nvidia/wheels:/wheels
-    command: /bin/bash -lc ". /app/gentl/.venv/bin/activate && exec python /app/gentl/PruebaAravis.py"
+    command: /bin/bash -lc ". /app/vision_app/.venv/bin/activate && exec python /app/main.py"
 
 

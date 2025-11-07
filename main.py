@@ -1,19 +1,16 @@
+#!/usr/bin/env python3
 """
 Entry point (main)
 ------------------
-- Lanza la aplicación importando `gentl.app.main()`.
+- Lanza la aplicación importando `vision_app.app.main()`.
 - Usado por el servicio systemd `vision-app.service` y para ejecución manual.
-"""
-#!/usr/bin/env python3
-"""
-Punto de entrada principal de la aplicación de visión industrial.
 """
 import sys
 
 def main():
     """Función principal que ejecuta la aplicación."""
     try:
-        from gentl.app import main as app_main
+        from vision_app.app import main as app_main
         sys.exit(app_main())
     except Exception as e:
         # Fallback para errores tempranos

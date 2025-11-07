@@ -28,12 +28,12 @@ ENV CUDA_HOME=/usr/local/cuda \
 
 WORKDIR /app
 
-# Copiar proyecto (ajusta si quieres sólo gentl/)
+# Copiar proyecto (ajusta si quieres sólo vision_app/)
 COPY . /app
 
 # Crear venv dentro del contenedor
-RUN python3 -m venv /app/gentl/.venv \
- && . /app/gentl/.venv/bin/activate \
+RUN python3 -m venv /app/vision_app/.venv \
+ && . /app/vision_app/.venv/bin/activate \
  && pip install --upgrade pip wheel setuptools \
  && pip install ultralytics==8.3.219 onnxruntime==1.12.1 psutil \
  && true
@@ -41,10 +41,10 @@ RUN python3 -m venv /app/gentl/.venv \
 # Torch para Jetson: se recomienda montar un volumen con el wheel local
 # y luego instalar en runtime, o usar imagen base con torch preinstalado.
 # Como referencia (opcional, si montas /wheels):
-# RUN . /app/gentl/.venv/bin/activate && pip install /wheels/torch-2.0.0+nv23.05-cp38-cp38-linux_aarch64.whl && true
+# RUN . /app/vision_app/.venv/bin/activate && pip install /wheels/torch-2.0.0+nv23.05-cp38-cp38-linux_aarch64.whl && true
 
 # Entrypoint por defecto: headless
 ENV HEADLESS=1
-CMD ["/bin/bash", "-lc", ". /app/gentl/.venv/bin/activate && exec python /app/gentl/PruebaAravis.py"]
+CMD ["/bin/bash", "-lc", ". /app/vision_app/.venv/bin/activate && exec python /app/main.py"]
 
 
