@@ -169,22 +169,36 @@ yolo:
 
 ## 🖥️ Uso
 
-### Ejecución Manual (con UI)
+### Ejecución Manual (Modo Debug - con UI)
 
 ```bash
+# Opción 1: Script automático (recomendado)
+cd /home/nvidia/Desktop/Vision_App
+./run_debug.sh
+
+# Opción 2: Manual
+sudo systemctl stop vision-app.service  # Detener servicio para liberar cámara
 cd /home/nvidia/Desktop/Vision_App
 source vision_app/.venv/bin/activate
-export PYTHONPATH=/home/nvidia/Desktop/Vision_App/vision_app
 python main.py
 ```
 
-### Ejecución Headless (systemd)
+**Nota:** El script `run_debug.sh` se encarga de detener el servicio systemd, activar el entorno virtual y configurar las variables de entorno necesarias. Los valores por defecto (`HEADLESS=0`, `AUTO_RUN=0`) ya están configurados para modo debug.
+
+### Ejecución Headless (Modo Continuo - systemd)
 
 ```bash
+# Iniciar servicio
 sudo systemctl start vision-app.service
+
+# Verificar estado
 sudo systemctl status vision-app.service
+
+# Ver logs en tiempo real
 sudo journalctl -u vision-app.service -f --no-pager
 ```
+
+**Nota:** El servicio se auto-arranca al encender el equipo (configurado con `install_vision_factory.sh`). No es necesario ejecutar `enable` nuevamente.
 
 ### Ver Logs
 

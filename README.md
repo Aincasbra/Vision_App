@@ -103,6 +103,7 @@ Vision_App/
 ├── install_pytorch_jetson.sh    # PyTorch en venv
 ├── install_aravis.sh            # Instalación Aravis 0.6
 ├── install_vision_factory.sh    # Servicio systemd + logs
+├── run_debug.sh                 # Script para ejecutar en modo debug (con UI)
 ├── verify_vision_installation.sh # Verificación post-instalación
 ├── README.md                    # Este archivo (visión general)
 ├── GUIA_INSTALACION_FABRICA.md  # Guía completa de instalación
@@ -111,21 +112,30 @@ Vision_App/
 
 ## 🎮 Uso
 
-### Modo UI (pruebas locales)
+### Modo Debug (con UI - pruebas locales)
 ```bash
-# Asegúrate de detener el servicio para liberar la cámara
-sudo systemctl stop vision-app.service
+# Opción 1: Script automático (recomendado)
+cd /home/nvidia/Desktop/Vision_App
+./run_debug.sh
 
-# Lanza con UI (HEADLESS desactivado)
-export HEADLESS=0
-python /home/nvidia/Desktop/Vision_App/main.py
+# Opción 2: Manual
+sudo systemctl stop vision-app.service  # Detener servicio para liberar cámara
+cd /home/nvidia/Desktop/Vision_App
+source vision_app/.venv/bin/activate
+python main.py
 ```
 
-### Modo continuo (fábrica)
+**Nota:** El script `run_debug.sh` detiene automáticamente el servicio systemd, activa el entorno virtual y ejecuta la aplicación con UI habilitada.
+
+### Modo Continuo (fábrica - headless)
 ```bash
-# Arranca el servicio en headless y déjalo habilitado
+# Iniciar el servicio (se auto-arranca al encender el equipo)
 sudo systemctl start vision-app.service
-sudo systemctl enable vision-app.service
+
+# Verificar estado
+systemctl status vision-app.service
+
+# El servicio ya está habilitado para auto-arranque (se configuró con install_vision_factory.sh)
 
 # Verificación que funciona y loggea
 systemctl status --no-pager vision-app
