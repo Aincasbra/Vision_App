@@ -17,7 +17,7 @@ ok(){ echo -e "${GREEN}[OK]${NC} $1"; }
 warn(){ echo -e "${YELLOW}[WARN]${NC} $1"; }
 err(){ echo -e "${RED}[ERR]${NC} $1"; }
 
-PROJECT_DIR="/home/nvidia/Desktop/Calippo_jetson"
+PROJECT_DIR="/home/nvidia/Desktop/Vision_App"
 SERVICE_NAME="vision-app.service"
 PYTHON_BIN="$PROJECT_DIR/vision_app/.venv/bin/python"
 ENTRYPOINT="$PROJECT_DIR/main.py"
@@ -51,7 +51,7 @@ WorkingDirectory=$PROJECT_DIR
 ExecStart=$PYTHON_BIN $ENTRYPOINT
 Environment=HEADLESS=1
 Environment=AUTO_RUN=1
-Environment=PYTHONPATH=$PROJECT_DIR/vision_app
+Environment=PYTHONPATH=$PROJECT_DIR/vision_app:/usr/lib/python3/dist-packages
 Environment=CONFIG_YOLO=$YOLO_CFG
 Environment=LOG_TO_SYSLOG=0
 Environment=LOG_TO_FILE=1

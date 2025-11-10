@@ -6,12 +6,12 @@
 
 1. Base del sistema (CUDA 11.4, cuDNN 8.6, TensorRT 8.5.2, deps, entorno):
    ```bash
-   sudo /home/nvidia/Desktop/Calippo_jetson/install_base_setup_system.sh
+   sudo /home/nvidia/Desktop/Vision_App/install_base_setup_system.sh
    ```
 
 2. PyTorch/TorchVision en la venv del proyecto (usa wheel local si lo tienes):
    ```bash
-   /home/nvidia/Desktop/Calippo_jetson/install_pytorch_jetson.sh
+   /home/nvidia/Desktop/Vision_App/install_pytorch_jetson.sh
    # Si tienes el wheel local de torch:
    # pip install /home/nvidia/tmp_jp/torch-2.0.0+nv23.05-cp38-cp38-linux_aarch64.whl
    # Y para torchvision: pip install /home/nvidia/tvsrc  (o el wheel compatible)
@@ -32,8 +32,8 @@
 
 2. **Verificar que estás en el directorio correcto**
    ```bash
-   cd /home/nvidia/Desktop/Calippo_jetson
-   pwd  # Debe mostrar: /home/nvidia/Desktop/Calippo_jetson
+   cd /home/nvidia/Desktop/Vision_App
+   pwd  # Debe mostrar: /home/nvidia/Desktop/Vision_App
    ```
 
 3. **Verificar que tienes los archivos necesarios**
@@ -203,31 +203,31 @@ Después de la instalación, debe cumplirse:
 - **install_base_setup_system.sh** (root): instala/asegura CUDA 11.4, cuDNN 8.6, TensorRT 8.5.2, OpenCV del sistema, dependencias y variables de entorno; habilita `logrotate.timer`.
   - Uso:
     ```bash
-    sudo /home/nvidia/Desktop/Calippo_jetson/install_base_setup_system.sh
+    sudo /home/nvidia/Desktop/Vision_App/install_base_setup_system.sh
     ```
 
 - **install_pytorch_jetson.sh** (usuario normal): instala PyTorch 2.0.0+nv23.05 y torchvision compatibles en la `.venv` del proyecto.
   - Uso:
     ```bash
-    /home/nvidia/Desktop/Calippo_jetson/install_pytorch_jetson.sh
+    /home/nvidia/Desktop/Vision_App/install_pytorch_jetson.sh
     ```
 
 - **install_aravis.sh** (root): instala Aravis 0.6 por paquetes.
   - Uso:
     ```bash
-    sudo /home/nvidia/Desktop/Calippo_jetson/install_aravis.sh
+    sudo /home/nvidia/Desktop/Vision_App/install_aravis.sh
     ```
 
 - **install_vision_factory.sh** (usuario normal): configura autoarranque (`systemd`), directorios/permisos de logs, activa `LOG_*` y prueba el servicio.
   - Uso:
     ```bash
-    /home/nvidia/Desktop/Calippo_jetson/install_vision_factory.sh
+    /home/nvidia/Desktop/Vision_App/install_vision_factory.sh
     ```
 
 - **verify_vision_installation.sh** (usuario normal): verificaciones post-instalación (servicio, logs, espacio, proceso en ejecución).
   - Uso:
     ```bash
-    /home/nvidia/Desktop/Calippo_jetson/verify_vision_installation.sh
+    /home/nvidia/Desktop/Vision_App/verify_vision_installation.sh
     ```
 
 - **run_vision_app.sh** (no ejecutar manualmente en producción): lanzador local para debug.
@@ -235,11 +235,11 @@ Después de la instalación, debe cumplirse:
 ### Orden recomendado (equipo de fábrica, JetPack 5.1.1 limpio)
 1. CUDA/cuDNN/TensorRT y deps del SO:
    ```bash
-   sudo /home/nvidia/Desktop/Calippo_jetson/install_base_setup_system.sh
+   sudo /home/nvidia/Desktop/Vision_App/install_base_setup_system.sh
    ```
 2. PyTorch en la `.venv` del proyecto:
    ```bash
-   /home/nvidia/Desktop/Calippo_jetson/install_pytorch_jetson.sh
+   /home/nvidia/Desktop/Vision_App/install_pytorch_jetson.sh
    ```
 3. Aravis 0.6 (paquetes del sistema):
    ```bash
@@ -247,8 +247,8 @@ Después de la instalación, debe cumplirse:
    ```
 4. Autoarranque + logs:
    ```bash
-   /home/nvidia/Desktop/Calippo_jetson/install_vision_factory.sh
-   /home/nvidia/Desktop/Calippo_jetson/verify_vision_installation.sh
+   /home/nvidia/Desktop/Vision_App/install_vision_factory.sh
+   /home/nvidia/Desktop/Vision_App/verify_vision_installation.sh
    ```
 
 ## 📎 Anexo: Referencia técnica (plataforma y versiones)
@@ -286,15 +286,15 @@ Después de la instalación, debe cumplirse:
 
 ### Variables del servicio
 - `HEADLESS=1`, `AUTO_RUN=1`
-- `PYTHONPATH=/home/nvidia/Desktop/Calippo_jetson/vision_app`
-- `CONFIG_YOLO=/home/nvidia/Desktop/Calippo_jetson/vision_app/config_yolo.yaml`
+- `PYTHONPATH=/home/nvidia/Desktop/Vision_App/vision_app`
+- `CONFIG_YOLO=/home/nvidia/Desktop/Vision_App/vision_app/config_yolo.yaml`
 - `LOG_TO_SYSLOG=0|1`, `LOG_TO_FILE=1`, `LOG_DIR=/var/log/vision_app`
 
 ### Chequeos rápidos
 ```bash
 nvcc --version
 ldconfig -p | grep libcudnn
-cd /home/nvidia/Desktop/Calippo_jetson/vision_app && source .venv/bin/activate
+cd /home/nvidia/Desktop/Vision_App/vision_app && source .venv/bin/activate
 python - <<'PY'
 import torch, cv2
 print('torch', torch.__version__, 'cuda', torch.cuda.is_available())

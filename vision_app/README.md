@@ -140,7 +140,7 @@ La aplicación está diseñada con separación clara de responsabilidades:
 
 ```yaml
 yolo:
-  model_path: "/home/nvidia/Desktop/Calippo_jetson/vision_app/v2_yolov8n_HERMASA_finetune.pt"
+  model_path: "/home/nvidia/Desktop/Vision_App/vision_app/v2_yolov8n_HERMASA_finetune.pt"
   image_size: 416
   confidence_threshold: 0.3
   iou_threshold: 0.45
@@ -172,9 +172,9 @@ yolo:
 ### Ejecución Manual (con UI)
 
 ```bash
-cd /home/nvidia/Desktop/Calippo_jetson
+cd /home/nvidia/Desktop/Vision_App
 source vision_app/.venv/bin/activate
-export PYTHONPATH=/home/nvidia/Desktop/Calippo_jetson/vision_app
+export PYTHONPATH=/home/nvidia/Desktop/Vision_App/vision_app
 python main.py
 ```
 
@@ -301,15 +301,15 @@ After=network.target
 [Service]
 Type=simple
 User=nvidia
-WorkingDirectory=/home/nvidia/Desktop/Calippo_jetson
-ExecStart=/home/nvidia/Desktop/Calippo_jetson/vision_app/.venv/bin/python /home/nvidia/Desktop/Calippo_jetson/main.py
+WorkingDirectory=/home/nvidia/Desktop/Vision_App
+ExecStart=/home/nvidia/Desktop/Vision_App/vision_app/.venv/bin/python /home/nvidia/Desktop/Vision_App/main.py
 Restart=always
 RestartSec=5
 
 Environment=HEADLESS=1
 Environment=AUTO_RUN=1
-Environment=PYTHONPATH=/home/nvidia/Desktop/Calippo_jetson/vision_app
-Environment=CONFIG_YOLO=/home/nvidia/Desktop/Calippo_jetson/vision_app/config_yolo.yaml
+Environment=PYTHONPATH=/home/nvidia/Desktop/Vision_App/vision_app:/usr/lib/python3/dist-packages
+Environment=CONFIG_YOLO=/home/nvidia/Desktop/Vision_App/vision_app/config_yolo.yaml
 Environment=LOG_TO_SYSLOG=0
 Environment=LOG_TO_FILE=1
 Environment=LOG_DIR=/var/log/vision_app

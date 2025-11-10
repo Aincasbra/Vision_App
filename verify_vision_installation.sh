@@ -164,14 +164,14 @@ check_running_process() {
     print_status "Verificando proceso en ejecución..."
     
     # Buscar proceso de la app modular
-    local process_count=$(ps aux | grep -E "python.*(/home/.*/Calippo_jetson/main\.py|-m +vision_app\.app|vision_app/app\.py)" | grep -v grep | wc -l)
+    local process_count=$(ps aux | grep -E "python.*(/home/.*/Vision_App/main\.py|-m +vision_app\.app|vision_app/app\.py)" | grep -v grep | wc -l)
     
     if [[ "$process_count" -gt 0 ]]; then
         print_success "✓ Proceso Vision App ejecutándose ($process_count proceso(s))"
         
         # Mostrar información del proceso
         echo "   Detalles del proceso:"
-        ps aux | grep -E "python.*(/home/.*/Calippo_jetson/main\.py|-m +vision_app\.app|vision_app/app\.py)" | grep -v grep | while read line; do
+        ps aux | grep -E "python.*(/home/.*/Vision_App/main\.py|-m +vision_app\.app|vision_app/app\.py)" | grep -v grep | while read line; do
             echo "   $line"
         done
     else
@@ -224,7 +224,7 @@ check_disk_space() {
     fi
     
     # Verificar espacio en directorio de trabajo
-    local work_space=$(df -h /home/nvidia/Desktop/Calippo_jetson 2>/dev/null | tail -1 | awk '{print $4}')
+    local work_space=$(df -h /home/nvidia/Desktop/Vision_App 2>/dev/null | tail -1 | awk '{print $4}')
     if [[ -n "$work_space" ]]; then
         print_success "✓ Espacio disponible en directorio de trabajo: $work_space"
     else
@@ -285,7 +285,7 @@ show_summary() {
     
     # Uso de recursos
     echo "💾 Uso de recursos:"
-    ps aux | grep -E "python.*(/home/.*/Calippo_jetson/main\.py)" | grep -v grep || echo "Proceso no encontrado"
+    ps aux | grep -E "python.*(/home/.*/Vision_App/main\.py)" | grep -v grep || echo "Proceso no encontrado"
     echo ""
     
     # Espacio en disco

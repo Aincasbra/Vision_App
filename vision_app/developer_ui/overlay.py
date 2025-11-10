@@ -173,10 +173,11 @@ def apply_yolo_overlay(
             pass
 
     # ROI y línea de decisión (si existe en builtins)
+    # Línea vertical casi al final del ROI (en ancho) para detectar cuando objetos cruzan
     try:
         rx, ry, rw, rh = getattr(builtins, "roi", (0, 0, out.shape[1], out.shape[0]))
-        decision_line_y = int(0.7 * rh)
-        cv2.line(out, (rx, ry + decision_line_y), (rx + rw, ry + decision_line_y), (0, 255, 255), 1)
+        decision_line_x = int(rx + 0.95 * rw)  # 95% del ancho del ROI (muy cerca del final)
+        cv2.line(out, (decision_line_x, ry), (decision_line_x, ry + rh), (0, 255, 255), 1)
     except Exception:
         pass
 

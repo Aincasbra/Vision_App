@@ -72,25 +72,25 @@ Sigue la guía completa: `GUIA_INSTALACION_FABRICA.md`.
 
 ```bash
 # 1. Base del sistema (CUDA, cuDNN, TensorRT)
-sudo /home/nvidia/Desktop/Calippo_jetson/install_base_setup_system.sh
+sudo /home/nvidia/Desktop/Vision_App/install_base_setup_system.sh
 
 # 2. PyTorch en venv
-/home/nvidia/Desktop/Calippo_jetson/install_pytorch_jetson.sh
+/home/nvidia/Desktop/Vision_App/install_pytorch_jetson.sh
 
 # 3. Aravis (solo si falta)
-sudo /home/nvidia/Desktop/Calippo_jetson/install_aravis.sh
+sudo /home/nvidia/Desktop/Vision_App/install_aravis.sh
 
 # 4. Servicio systemd y logs
-/home/nvidia/Desktop/Calippo_jetson/install_vision_factory.sh
+/home/nvidia/Desktop/Vision_App/install_vision_factory.sh
 
 # 5. Verificación
-/home/nvidia/Desktop/Calippo_jetson/verify_vision_installation.sh
+/home/nvidia/Desktop/Vision_App/verify_vision_installation.sh
 ```
 
 ## 📁 Estructura
 
 ```
-Calippo_jetson/
+Vision_App/
 ├── 🎯 vision_app/                # App principal YOLO + Aravis + logging
 │   ├── app.py                   # Orquestador principal
 │   ├── main.py                  # Punto de entrada (systemd)
@@ -118,7 +118,7 @@ sudo systemctl stop vision-app.service
 
 # Lanza con UI (HEADLESS desactivado)
 export HEADLESS=0
-python /home/nvidia/Desktop/Calippo_jetson/main.py
+python /home/nvidia/Desktop/Vision_App/main.py
 ```
 
 ### Modo continuo (fábrica)
