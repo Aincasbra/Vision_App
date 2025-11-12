@@ -4,7 +4,7 @@ Tracking ligero (asignación de IDs estables)
 - Sistema de tracking basado en similitud espacial y temporal para asignar IDs
   estables a objetos detectados entre frames consecutivos.
 - Funciones principales:
-  * `calculate_object_similarity()`: calcula similitud entre dos cajas usando:
+  * `_calculate_object_similarity()`: calcula similitud entre dos cajas usando:
     - IoU (Intersection over Union) - 40% del peso
     - Distancia entre centros - 20% del peso
     - Ratio de tamaño - 20% del peso
@@ -22,22 +22,40 @@ Tracking ligero (asignación de IDs estables)
 """
 import numpy as np
 
-
+# Variables globales
 object_history = {}
 next_stable_id = 1
 frame_counter = 0
 
 
-def calculate_object_similarity(box1, box2, class1, class2):
+def _calculate_object_similarity(box1, box2, class1, class2):
+    """
+    Calcula similaridad entre dos detecciones, comparando:
+    - coordenadas de las bounding boxes,
+    - y clases asignadas.
+
+    Retorna:
+    - similarity (calculada arbitrariamente con la formula de la última linea)
+    - iou (intersection of union): cantidad del area de las 2 bounding boxes intersecada
+        calculada como fraccion de la union de ambas. Parámetro estándar en apps de visión.
+    - center_dist: centro ponderado de las 2 bounding boxes.    
+    """
+    # Boxes
     x1, y1, x2, y2 = box1
     px1, py1, px2, py2 = box2
+
+    # Intersection
     inter_w = max(0, min(x2, px2) - max(x1, px1))
     inter_h = max(0, min(y2, py2) - max(y1, y2 if False else py2))  # guard simple
     inter_h = max(0, min(y2, py2) - max(y1, py1))
     inter = inter_w * inter_h
+
+    # Union
     area1 = max(0, x2-x1) * max(0, y2-y1)
     area2 = max(0, px2-px1) * max(0, py2-py1)
     union = area1 + area2 - inter
+
+    # Intersection of Union, Center of distribution, other useful params
     iou = inter / union if union > 0 else 0.0
     cx1, cy1 = (x1+x2)/2, (y1+y2)/2
     cx2, cy2 = (px1+px2)/2, (py1+py2)/2
@@ -46,6 +64,8 @@ def calculate_object_similarity(box1, box2, class1, class2):
     size2 = np.sqrt(area2)
     size_ratio = min(size1, size2) / max(size1, size2) if max(size1, size2) > 0 else 0
     class_match = 1.0 if class1 == class2 else 0.0
+
+    # Arbitrary formula to estimate box similarity
     similarity = (
         0.4 * iou +
         0.2 * max(0, 1 - center_dist/100) +
@@ -56,6 +76,14 @@ def calculate_object_similarity(box1, box2, class1, class2):
 
 
 def assign_stable_ids(xyxy, confs, clss, current_frame):
+    """
+    Método principal que asigna IDs a bounding boxes de cada frame.
+    Llama internamente a _calculate_object_similarity() sobre cada pareja de bounding boxes.
+
+    Retorna:
+    - stable_ids: List; lista de IDs de latas para el current_frame.
+    
+    """
     global object_history, next_stable_id, frame_counter
     frame_counter = current_frame
     stable_ids = []
@@ -78,7 +106,7 @@ def assign_stable_ids(xyxy, confs, clss, current_frame):
                 continue
             hist_box = data['last_box']
             hist_cls = data.get('class', cls)
-            similarity, iou, center_dist = calculate_object_similarity(box, hist_box, cls, hist_cls)
+            similarity, iou, center_dist = _calculate_object_similarity(box, hist_box, cls, hist_cls)
             if (similarity > best_similarity and iou >= 0.3 and center_dist <= 100 and similarity >= 0.45):
                 best_match_id = obj_id
                 best_similarity = similarity

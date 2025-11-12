@@ -22,7 +22,7 @@ from model.detection.yolo_wrapper import YOLOPyTorchCUDA
 # Valores por defecto para YOLO
 DEFAULT_CONF_THRESHOLD = 0.4
 DEFAULT_IOU_THRESHOLD = 0.7
-DEFAULT_WEIGHTS = "yolov8n.pt"
+DEFAULT_WEIGHTS = "v2_yolov8n_HERMASA_finetune.pt"
 DEFAULT_IMAGE_SIZE = 640
 DEFAULT_PROCESS_EVERY = 1
 
