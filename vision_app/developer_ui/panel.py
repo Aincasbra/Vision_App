@@ -12,9 +12,11 @@ import numpy as np
 def crear_panel_control_stviewer(img_width, img_height):
     """Crea el panel de control estilo StViewer (copiado del original)"""
     # Asegurar altura mínima para dibujar todos los controles (incluyendo clasificador + tracks activos)
+    # El panel SIEMPRE tiene 350px de ancho (fijo)
+    PANEL_WIDTH = 350
     min_h = 900
     ph = max(int(img_height), min_h)
-    panel = np.full((ph, 350, 3), (40, 40, 40), dtype=np.uint8)
+    panel = np.full((ph, PANEL_WIDTH, 3), (40, 40, 40), dtype=np.uint8)
     
     # Título con gradiente
     cv2.rectangle(panel, (0, 0), (350, 60), (64, 64, 64), -1)
@@ -73,53 +75,53 @@ def crear_panel_control_stviewer(img_width, img_height):
         cv2.rectangle(panel, (x, y_offset+10), (x+60, y_offset+35), (255, 255, 255), 2)
         cv2.putText(panel, patron, (x+20, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     
-    # Métricas YOLO
+    # Información de dispositivos (se actualizará en actualizar_panel_control)
+    # Mover más abajo para dar más espacio
     y_offset = 400
-    cv2.putText(panel, "YOLO Stats:", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-    # Mostrar información de dispositivos
-    device_info = "PyTorch: CPU | OpenCV: CPU"
-    cv2.putText(panel, f"Devices: {device_info}", (20, y_offset+25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-    cv2.putText(panel, "FPS: 0.0", (20, y_offset+45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    cv2.putText(panel, "Tracks: 0", (20, y_offset+65), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    cv2.putText(panel, "Detections: 0", (20, y_offset+85), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    cv2.putText(panel, "Devices:", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    # Fondo más oscuro para mejor contraste - más alto para dos líneas
+    cv2.rectangle(panel, (18, y_offset+18), (332, y_offset+60), (20, 20, 20), -1)
+    device_info_pytorch = "PyTorch: ?"
+    device_info_opencv = "OpenCV: CPU"
+    cv2.putText(panel, device_info_pytorch, (20, y_offset+35), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
+    cv2.putText(panel, device_info_opencv, (20, y_offset+55), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
     
-    # Controles del Clasificador
-    y_offset = 500
+    # Métricas YOLO (mover más abajo)
+    y_offset = 470
+    cv2.putText(panel, "YOLO Stats:", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    # Fondo para textos de métricas YOLO para mejor visibilidad
+    cv2.rectangle(panel, (18, y_offset+18), (332, y_offset+100), (25, 25, 25), -1)
+    cv2.putText(panel, "FPS: 0.0", (20, y_offset+35), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    cv2.putText(panel, "Tracks: 0", (20, y_offset+55), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    cv2.putText(panel, "Detections: 0", (20, y_offset+75), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    cv2.putText(panel, "Confidence: 0.00", (20, y_offset+95), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    
+    # Información del Clasificador (solo visualización, ajuste desde CONFIG)
+    y_offset = 570
     cv2.putText(panel, "CLASIFICADOR:", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 165, 0), 1)
     
-    # Barra de confianza para clasificación
-    cv2.putText(panel, f"Confianza: {0.7:.1f}", (20, y_offset+25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    # Barra de confianza para clasificación (valor inicial placeholder, se actualizará desde config)
+    # NOTA: El valor real debe venir desde config_model.yaml, este es solo un placeholder visual
+    classifier_conf_placeholder = 0.70  # Solo para inicialización visual, se sobrescribe en actualizar_panel_control
+    cv2.putText(panel, f"Confianza: {classifier_conf_placeholder:.1f}", (20, y_offset+25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
     cv2.rectangle(panel, (20, y_offset+30), (310, y_offset+50), (64, 64, 64), -1)
     cv2.rectangle(panel, (20, y_offset+30), (310, y_offset+50), (128, 128, 128), 2)
     # Barra de progreso de confianza
-    conf_width = int((0.7 - 0.5) / 0.5 * 290)  # 0.5-1.0 -> 0-290px
+    conf_width = int((classifier_conf_placeholder - 0.5) / 0.5 * 290)  # 0.5-1.0 -> 0-290px
     conf_width = max(0, min(290, conf_width))
     cv2.rectangle(panel, (20, y_offset+30), (20+conf_width, y_offset+50), (255, 165, 0), -1)
     
-    # Botones de ajuste de confianza
-    cv2.rectangle(panel, (20, y_offset+55), (80, y_offset+75), (100, 100, 100), -1)
-    cv2.rectangle(panel, (20, y_offset+55), (80, y_offset+75), (255, 255, 255), 2)
-    cv2.putText(panel, "-0.1", (25, y_offset+70), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    
-    cv2.rectangle(panel, (90, y_offset+55), (150, y_offset+75), (100, 100, 100), -1)
-    cv2.rectangle(panel, (90, y_offset+55), (150, y_offset+75), (255, 255, 255), 2)
-    cv2.putText(panel, "+0.1", (95, y_offset+70), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    
-    # Modo conservador
-    mode_color = (0, 255, 0) if False else (255, 0, 0)
-    cv2.rectangle(panel, (160, y_offset+55), (310, y_offset+75), mode_color, -1)
-    cv2.rectangle(panel, (160, y_offset+55), (310, y_offset+75), (255, 255, 255), 2)
-    mode_text = "CONSERVADOR" if False else "NORMAL"
-    cv2.putText(panel, mode_text, (170, y_offset+70), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    # Nota: Ajustar desde CONFIG
+    cv2.putText(panel, "Ajustar desde CONFIG", (20, y_offset+60), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
     
     # Estadísticas del clasificador
-    y_offset = 580
+    y_offset = 650
     cv2.putText(panel, "Clasificadas: 0", (20, y_offset+5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
     cv2.putText(panel, "Buenas: 0", (20, y_offset+25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
     cv2.putText(panel, "Malas: 0", (20, y_offset+45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
     
     # Botón Config
-    y_offset = 640
+    y_offset = 710
     cv2.rectangle(panel, (20, y_offset+10), (160, y_offset+40), (100, 100, 100), -1)
     cv2.rectangle(panel, (20, y_offset+10), (160, y_offset+40), (255, 255, 255), 2)
     cv2.putText(panel, "CONFIG", (30, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
@@ -130,7 +132,7 @@ def crear_panel_control_stviewer(img_width, img_height):
     cv2.putText(panel, "INFO", (200, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
     
     # Botón Salir (derecha)
-    y_offset = 710
+    y_offset = 780
     cv2.rectangle(panel, (170, y_offset+10), (310, y_offset+40), (100, 0, 0), -1)
     cv2.rectangle(panel, (170, y_offset+10), (310, y_offset+40), (255, 255, 255), 2)
     cv2.putText(panel, "SALIR", (200, y_offset+28), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
@@ -138,7 +140,7 @@ def crear_panel_control_stviewer(img_width, img_height):
     return panel
 
 
-def actualizar_panel_control(panel, metricas, estado_camara, img_width, img_height, gamma_actual=0.8, patron_actual="BG", yolo_stats=None, cam=None):
+def actualizar_panel_control(panel, metricas, estado_camara, img_width, img_height, gamma_actual=0.8, patron_actual="BG", yolo_stats=None, cam=None, context=None, yolo_conf_threshold=None, classifier_conf_threshold=None, classifier_stats=None):
     """Actualiza el panel de control con información en tiempo real"""
     # Crear una copia del panel base
     panel_actualizado = panel.copy()
@@ -151,17 +153,113 @@ def actualizar_panel_control(panel, metricas, estado_camara, img_width, img_heig
     cv2.rectangle(panel_actualizado, (20, y_offset+10), (330, y_offset+40), color_estado, 2)
     cv2.putText(panel_actualizado, texto_estado, (30, y_offset+30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_estado, 2)
     
-    # Actualizar métricas YOLO (solo tracks y detecciones, sin FPS)
+    # Actualizar información de dispositivos (PyTorch y OpenCV) - MEJORADO
     y_offset = 400
+    try:
+        import torch
+        # Detectar dispositivo PyTorch
+        if torch.cuda.is_available():
+            # Acortar nombre del dispositivo si es muy largo
+            device_name = torch.cuda.get_device_name(0)
+            if len(device_name) > 15:
+                device_name = device_name[:12] + "..."
+            pytorch_device = f"CUDA ({device_name})"
+            device_color = (0, 255, 0)  # Verde para GPU
+        else:
+            pytorch_device = "CPU"
+            device_color = (255, 255, 0)  # Amarillo para CPU
+        
+        # Detectar dispositivo OpenCV
+        try:
+            if hasattr(cv2, 'cuda') and hasattr(cv2.cuda, 'getCudaEnabledDeviceCount'):
+                cuda_count = cv2.cuda.getCudaEnabledDeviceCount()
+                opencv_device = "CUDA" if cuda_count > 0 else "CPU"
+            else:
+                opencv_device = "CPU"
+        except Exception:
+            opencv_device = "CPU"
+        
+        device_info_pytorch = f"PyTorch: {pytorch_device}"
+        device_info_opencv = f"OpenCV: {opencv_device}"
+    except Exception:
+        device_info_pytorch = "PyTorch: ?"
+        device_info_opencv = "OpenCV: CPU"
+        device_color = (255, 255, 0)
+    
+    # Dibujar fondo más oscuro para mejor contraste del texto de dispositivos - más alto para dos líneas
+    cv2.rectangle(panel_actualizado, (18, y_offset+18), (332, y_offset+60), (30, 30, 30), -1)
+    # Texto en dos líneas para evitar que salga fuera
+    cv2.putText(panel_actualizado, device_info_pytorch, (20, y_offset+35), cv2.FONT_HERSHEY_SIMPLEX, 0.45, device_color, 2)
+    cv2.putText(panel_actualizado, device_info_opencv, (20, y_offset+55), cv2.FONT_HERSHEY_SIMPLEX, 0.45, device_color, 2)
+    
+    # Actualizar métricas YOLO (tracks, detecciones, y confianza desde config) - mover más abajo
+    # yolo_conf_threshold es OBLIGATORIO (debe venir de config_model.yaml)
+    if yolo_conf_threshold is None:
+        raise ValueError("yolo_conf_threshold es obligatorio. Debe venir de config_model.yaml")
+    yolo_conf = float(yolo_conf_threshold)
+    
+    y_offset = 470
+    # Fondo para textos de métricas YOLO para mejor visibilidad
+    cv2.rectangle(panel_actualizado, (18, y_offset+18), (332, y_offset+100), (25, 25, 25), -1)
+    
     if yolo_stats:
-        cv2.putText(panel_actualizado, f"Tracks: {yolo_stats.get('tracks', 0)}", (20, y_offset+45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        cv2.putText(panel_actualizado, f"Detections: {yolo_stats.get('detections', 0)}", (20, y_offset+65), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        cv2.putText(panel_actualizado, f"Confidence: {0.3:.2f}", (20, y_offset+85), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        cv2.putText(panel_actualizado, f"FPS: {yolo_stats.get('fps', 0.0):.1f}", (20, y_offset+35), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        cv2.putText(panel_actualizado, f"Tracks: {yolo_stats.get('tracks', 0)}", (20, y_offset+55), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        cv2.putText(panel_actualizado, f"Detections: {yolo_stats.get('detections', 0)}", (20, y_offset+75), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        cv2.putText(panel_actualizado, f"Confidence: {yolo_conf:.2f}", (20, y_offset+95), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
         # Mostrar estadísticas de procesamiento adaptativo
         if 'skip_ratio' in yolo_stats:
             skip_pct = yolo_stats['skip_ratio'] * 100
-            cv2.putText(panel_actualizado, f"Skip: {skip_pct:.0f}%", (20, y_offset+105), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+            cv2.putText(panel_actualizado, f"Skip: {skip_pct:.0f}%", (20, y_offset+115), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+    else:
+        # Mostrar valores por defecto si no hay stats
+        cv2.putText(panel_actualizado, "FPS: 0.0", (20, y_offset+35), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        cv2.putText(panel_actualizado, "Tracks: 0", (20, y_offset+55), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        cv2.putText(panel_actualizado, "Detections: 0", (20, y_offset+75), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        cv2.putText(panel_actualizado, f"Confidence: {yolo_conf:.2f}", (20, y_offset+95), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    
+    # Actualizar confianza del clasificador desde config
+    # classifier_conf_threshold es OBLIGATORIO (debe venir de config_model.yaml)
+    if classifier_conf_threshold is None:
+        raise ValueError("classifier_conf_threshold es obligatorio. Debe venir de config_model.yaml")
+    classifier_conf = float(classifier_conf_threshold)
+    
+    y_offset = 570
+    # Fondo para mejor visibilidad del texto
+    cv2.rectangle(panel_actualizado, (18, y_offset+20), (332, y_offset+65), (25, 25, 25), -1)
+    cv2.putText(panel_actualizado, f"Confianza: {classifier_conf:.1f}", (20, y_offset+25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    cv2.rectangle(panel_actualizado, (20, y_offset+30), (310, y_offset+50), (64, 64, 64), -1)
+    cv2.rectangle(panel_actualizado, (20, y_offset+30), (310, y_offset+50), (128, 128, 128), 2)
+    # Barra de progreso de confianza
+    conf_width = int((classifier_conf - 0.5) / 0.5 * 290)  # 0.5-1.0 -> 0-290px
+    conf_width = max(0, min(290, conf_width))
+    cv2.rectangle(panel_actualizado, (20, y_offset+30), (20+conf_width, y_offset+50), (255, 165, 0), -1)
+    cv2.putText(panel_actualizado, "Ajustar desde CONFIG", (20, y_offset+60), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
+    
+    # Actualizar estadísticas del clasificador (buenas/malas)
+    y_offset = 650
+    # Fondo para mejor visibilidad
+    cv2.rectangle(panel_actualizado, (18, y_offset+0), (332, y_offset+50), (25, 25, 25), -1)
+    
+    if classifier_stats:
+        total = classifier_stats.get('total', 0)
+        buenas = classifier_stats.get('buenas', 0)
+        malas = classifier_stats.get('malas', 0)
+    else:
+        # Intentar obtener desde context si está disponible
+        total = 0
+        buenas = 0
+        malas = 0
+        if context and hasattr(context, 'classifier_stats'):
+            stats = context.classifier_stats
+            total = stats.get('total', 0)
+            buenas = stats.get('buenas', 0)
+            malas = stats.get('malas', 0)
+    
+    cv2.putText(panel_actualizado, f"Clasificadas: {total}", (20, y_offset+20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    cv2.putText(panel_actualizado, f"Buenas: {buenas}", (20, y_offset+40), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+    cv2.putText(panel_actualizado, f"Malas: {malas}", (20, y_offset+60), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
     
     # Actualizar indicador de gamma
     y_offset = 280
@@ -234,25 +332,14 @@ def detectar_clic_panel_control(x, y, panel_offset_x, img_height):
         return "BAYER_GR"
     elif 230 <= panel_x_click <= 290 and 350 <= panel_y_click <= 385:
         return "BAYER_GB"
-    # Controles del Clasificador
-    # Botón -0.1 confianza
-    elif 20 <= panel_x_click <= 80 and 555 <= panel_y_click <= 575:
-        return "CLF_CONF_DOWN"
-    # Botón +0.1 confianza
-    elif 90 <= panel_x_click <= 150 and 555 <= panel_y_click <= 575:
-        return "CLF_CONF_UP"
-    # Botón modo conservador/normal
-    elif 160 <= panel_x_click <= 310 and 555 <= panel_y_click <= 575:
-        return "CLF_MODE_TOGGLE"
-    
     # Botón CONFIG
-    elif 20 <= panel_x_click <= 160 and 650 <= panel_y_click <= 680:
+    elif 20 <= panel_x_click <= 160 and 710 <= panel_y_click <= 740:
         return "CONFIG"
     # Botón INFO (derecha)
-    elif 170 <= panel_x_click <= 310 and 650 <= panel_y_click <= 680:
+    elif 170 <= panel_x_click <= 310 and 710 <= panel_y_click <= 740:
         return "INFO"
     # Botón SALIR (derecha)
-    elif 170 <= panel_x_click <= 310 and 720 <= panel_y_click <= 750:
+    elif 170 <= panel_x_click <= 310 and 780 <= panel_y_click <= 810:
         return "EXIT"
     
     return None

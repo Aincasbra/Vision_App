@@ -1,19 +1,31 @@
 """
 App (orquestador principal)
 ----------------------------
-- Orquesta la inicialización y ejecución del bucle principal de la aplicación.
-- Llama a funciones de módulos especializados.
-- Flujo: inicializa dispositivo → aplica optimizaciones → carga modelos → 
-  inicializa cámara → ejecuta bucle principal.
-- Se apoya en módulos modulares:
+- Responsabilidad: ORQUESTAR la inicialización y ejecución del bucle principal.
+- NO extrae ni procesa configuración: solo pasa `context` a los módulos especializados.
+- Los módulos especializados leen directamente desde `context.settings` cuando necesitan config.
+
+Flujo de inicialización:
+  1. Carga configuración: `load_settings()` → `context.settings`
+  2. Inicializa dispositivo: detecta CUDA/CPU
+  3. Aplica optimizaciones: optimizaciones genéricas del sistema
+  4. Carga modelos: `DetectionService` carga YOLO automáticamente, `load_classifier()` carga clasificador
+     - Estos módulos leen directamente desde `context.settings`
+  5. Inicializa cámara: abre cámara y carga su configuración desde `config_camera.yaml`
+  6. Inicia hilos: crea `DetectionService(context)` que lee config desde `context.settings`
+  7. Ejecuta bucle principal: captura frames y muestra UI
+
+Módulos especializados (cada uno lee su propia config):
+  * `core/settings`: carga YAML y crea Settings
   * `core/optimizations`: optimizaciones genéricas del sistema
-  * `model/detection/config`: carga del modelo YOLO y configuración (incluye lectura desde settings)
-  * `model/classifier`: carga del clasificador (load_classifier desde multiclass.py)
+  * `model/detection/detection_service`: carga modelo YOLO automáticamente (lee desde `context.settings.yolo`)
+  * `model/classifier/multiclass`: carga clasificador (lee desde `context.settings.classifier`)
   * `camera/device_manager`: gestión de dispositivos (cámara)
-  * `model/detection/detection_service`: servicio completo de detección (YOLO + tracking + clasificación)
+  * `model/detection/detection_service`: servicio de detección (lee desde `context.settings`)
   * `developer_ui/*`: interfaz de depuración (ventana local)
   * `core/recording`: grabación de vídeo/imágenes
-- Se invoca desde `main.py`.
+
+Se invoca desde `main.py`.
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -29,12 +41,13 @@ from core.settings import load_settings
 from core.logging import get_logger, log_info, log_warning, log_error
 from core.settings import AppContext
 from core.optimizations import apply_all as apply_all_optimizations
+from core.timings import TimingsLogger
 from camera.device_manager import CameraBackend, open_camera
 from developer_ui.overlay import apply_yolo_overlay, apply_gamma_from_state
 from developer_ui.app_controller import AppController
 from developer_ui.window import create_main_window, show_frame_with_panel, show_black_with_panel, destroy_window
 from core.recording import Recorder
-from model.detection import DetectionService, load_yolo_model, load_yolo_config, YOLOPyTorchCUDA
+from model.detection import DetectionService, YOLOPyTorchCUDA
 from model.classifier import load_classifier
 
 
@@ -63,10 +76,16 @@ class App:
     auto_cal_indicator_time: float = 0.0
     
     def __post_init__(self):
+        """Inicializa el contexto de la aplicación.
+        
+        Carga configuración desde YAML y la guarda en context.settings.
+        Los módulos especializados leerán directamente desde context.settings.
+        """
         self.logger = get_logger("system")
         self.context.logger = self.logger
+        # Cargar configuración desde YAML (config_model.yaml)
         settings = load_settings()
-        self.context.settings = settings
+        self.context.settings = settings  # Accesible por todos los módulos
         # Compat: mantener config dict para módulos antiguos
         self.context.config = settings.raw_config
         self.context.evt_queue = queue.Queue()
@@ -78,6 +97,11 @@ class App:
             self.context.infer_queue = queue.Queue()
         # Servicio de grabación
         self.recorder = Recorder(out_dir=os.path.join(os.path.dirname(__file__), "Videos_YOLO"))
+        
+        # TimingsLogger para mediciones de inicialización y pipeline
+        log_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        self.timings_logger = TimingsLogger(log_dir=log_dir, enable_stats=True, report_interval=50)
     
     def initialize(self) -> bool:
         """Inicializa componentes de la aplicación."""
@@ -85,18 +109,30 @@ class App:
             log_info("🚀 Inicializando aplicación Vision App...")
             
             # Inicializar dispositivo unificado
+            self.timings_logger.start('init_device')
             self._initialize_device()
+            self.timings_logger.end('init_device')
             
             # Aplicar optimizaciones
+            self.timings_logger.start('init_optimizations')
             self._apply_optimizations()
+            self.timings_logger.end('init_optimizations')
             
             # Cargar modelos
+            self.timings_logger.start('init_load_models')
             self._load_models()
+            self.timings_logger.end('init_load_models')
             
             # Inicializar cámara
+            self.timings_logger.start('init_camera')
             self._initialize_camera()
+            self.timings_logger.end('init_camera')
             
             log_info("✅ Aplicación inicializada correctamente")
+            
+            # Imprimir reporte de inicialización
+            self.timings_logger.print_report()
+            
             return True
             
         except Exception as e:
@@ -139,6 +175,12 @@ class App:
         # Limpiar recursos
         self._cleanup()
         
+        # Generar reporte final de timing
+        if hasattr(self, 'timings_logger') and self.timings_logger:
+            log_info("📊 Generando reporte final de timing...", logger_name="timings")
+            self.timings_logger.print_report()
+            self.timings_logger.save_report()
+        
         log_info("✅ Aplicación detenida")
     
     def _initialize_device(self):
@@ -157,70 +199,74 @@ class App:
     def _apply_optimizations(self):
         """Aplica optimizaciones del sistema."""
         apply_all_optimizations(self.context)
-        
-        # Leer y guardar configuración YOLO para uso posterior
-        yolo_conf, yolo_iou = load_yolo_config(self.context)
-        self.context.yolo_conf = yolo_conf
-        self.context.yolo_iou = yolo_iou
-        log_info(f"✅ Configuración YOLO: Conf={yolo_conf}, IOU={yolo_iou}")
     
     def _load_models(self):
-        """Carga modelos YOLO y clasificador."""
-        # Cargar modelo YOLO (toda la lógica está en model/detection/config.py)
-        self.yolo_model = load_yolo_model(self.context)
+        """Carga modelos YOLO y clasificador.
         
-        # Cargar clasificador (toda la lógica está en model/classifier/multiclass.py)
-        load_classifier()
+        Los módulos especializados leen directamente desde config_model.yaml:
+        - DetectionService carga el modelo YOLO automáticamente leyendo directamente desde config_model.yaml
+        - load_classifier() lee directamente desde config_model.yaml
+        """
+        # Cargar clasificador
+        # load_classifier() lee directamente desde config_model.yaml (sin pasar config)
+        self.timings_logger.start('init_load_classifier')
+        load_classifier(classifier_config=None)  # None = leer directamente desde config_model.yaml
+        self.timings_logger.end('init_load_classifier')
+        
+        # NOTA: El modelo YOLO se carga automáticamente en DetectionService.__init__()
+        # leyendo directamente desde config_model.yaml, no es necesario cargarlo aquí
     
     def _initialize_camera(self):
         """Inicializa la cámara."""
         try:
             # Abrir cámara usando función genérica (auto-detección o backend configurado)
+            # El logging de parámetros se hace automáticamente en device_manager.open_camera()
             self.camera = open_camera(backend_cls=None, bayer_code=cv2.COLOR_BayerBG2BGR, index=0)
-            
-            # Dump inicial de parámetros (si existe utilidad)
-            try:
-                log_info("📷 Parámetros de cámara:")
-                log_info(f"   - PixelFormat: {CameraBackend.safe_get(self.camera, 'PixelFormat', 'N/A')}")
-                log_info(f"   - Width: {CameraBackend.safe_get(self.camera, 'Width', 'N/A')}")
-                log_info(f"   - Height: {CameraBackend.safe_get(self.camera, 'Height', 'N/A')}")
-            except Exception:
-                pass
             
             # Configurar código Bayer en contexto si se usa aguas abajo
             self.context.config["cv_code_bayer"] = cv2.COLOR_BayerBG2BGR
             
-            # Log IP si está disponible (solo GenICam/Aravis)
-            try:
-                if hasattr(self.camera, 'get_node') and self.camera.get_node("GevCurrentIPAddress"):
-                    ip_node = self.camera.get_node("GevCurrentIPAddress")
-                    if ip_node:
-                        ip_int = int(ip_node.value)
-                        ip_str = ".".join(str((ip_int >> (8*i)) & 0xff) for i in [3,2,1,0])
-                        log_info(f"📡 IP cámara (GenICam): {ip_str}")
-            except Exception:
-                pass
-            
-            log_info("📷 Cámara inicializada correctamente")
+            if self.camera is not None:
+                log_info("📷 Cámara inicializada correctamente")
         except Exception as e:
             log_error(f"❌ Error inicializando cámara: {e}")
             self.camera = None
     
     def _start_threads(self):
-        """Inicia hilos de procesamiento."""
+        """Inicia hilos de procesamiento.
+        
+        DetectionService lee directamente desde context.settings:
+        - context.settings.yolo.confidence_threshold
+        - context.settings.classifier.bad_threshold
+        - context.settings.classifier.classes
+        
+        app.py NO extrae estos valores, solo pasa el context completo.
+        """
         try:
-            # Iniciar servicio de inferencia YOLO (sustituye hilo interno)
-            # Usar conf_threshold de optimizaciones si está disponible, sino DetectionService usará su default
-            yolo_conf = getattr(self.context, 'yolo_conf', None)
-            # process_every: DetectionService tiene default de 1, no es necesario pasarlo
+            # Obtener configuración de cámara (work_zone, bottle_sizes)
+            # La configuración se carga automáticamente cuando se abre la cámara
+            camera_config = None
+            if self.camera is not None and hasattr(self.camera, 'config'):
+                camera_config = self.camera.config
+            
+            # Pasar timings_logger al context para que DetectionService lo use
+            self.context.timings_logger = self.timings_logger
+            
+            # Iniciar servicio de inferencia YOLO
+            # DetectionService carga el modelo YOLO automáticamente leyendo directamente desde config_model.yaml
+            self.timings_logger.start('init_detection_service')
             self.detection_service = DetectionService(
-                yolo_model=self.yolo_model,
                 infer_queue=self.context.infer_queue,
-                conf_threshold=yolo_conf,  # None = usa default de DetectionService (0.4)
+                context=self.context,  # Solo para colas y logger, NO para configuración
+                yolo_model=None,  # None = cargar automáticamente leyendo desde config_model.yaml
                 process_every=1,  # Valor fijo, podría venir de settings en el futuro
                 camera=self.camera,
+                camera_config=camera_config,  # Configuración de cámara (work_zone, bottle_sizes)
             )
+            # Guardar referencia al modelo cargado para uso en app.py si es necesario
+            self.yolo_model = self.detection_service.yolo_model
             self.detection_service.start()
+            self.timings_logger.end('init_detection_service')
         except Exception as e:
             log_error(f"❌ No se pudo iniciar DetectionService: {e}")
         
@@ -246,17 +292,18 @@ class App:
         controller = AppController()
         
         # Crear UI si no es headless
+        # Variables para tamaño de ventana (se actualizarán con el tamaño real del frame)
+        w_display, h_display = 1624, 1240  # Valores por defecto iniciales
         if not headless:
             try:
-                # Interfaz inicial (tamaño original de cámara)
-                try:
-                    h_max = int(CameraBackend.safe_get(self.camera, 'HeightMax', 1240))
-                    w_max = int(CameraBackend.safe_get(self.camera, 'WidthMax', 1624))
-                except Exception:
-                    h_max, w_max = 1240, 1624  # Valores por defecto
+                self.timings_logger.start('init_create_ui')
+                from developer_ui.window import get_window_size_from_camera
+                # Calcular tamaño de ventana basado en ROI de la cámara
+                w_display, h_display = get_window_size_from_camera(self.camera)
                 
-                # Crear ventana principal usando el módulo dedicado
-                create_main_window(w_max + 350, h_max)
+                # Crear ventana principal (el módulo calcula el tamaño automáticamente desde la cámara)
+                create_main_window(camera=self.camera)
+                self.timings_logger.end('init_create_ui')
                 
                 # Configurar callback del ratón en la ventana correcta
                 try:
@@ -265,8 +312,8 @@ class App:
                 except Exception:
                     pass
                 
-                # Mostrar interfaz inicial con pantalla negra
-                show_black_with_panel(w_max, h_max)
+                # Mostrar interfaz inicial con pantalla negra (mostrar log solo al inicio)
+                show_black_with_panel(w_display, h_display, log_once=True)
             except Exception as e:
                 log_warning(f"⚠️ No se pudo crear ventana UI: {e}. Forzando HEADLESS.")
                 headless = True
@@ -321,11 +368,16 @@ class App:
                         img_bgr = apply_gamma_from_state(img_bgr, self.gamma_actual)
                         
                         # Actualizar dimensiones UI para detección de clics
+                        # NOTA: El ROI de la cámara NO puede cambiar durante la ejecución por seguridad.
+                        # La ventana se redimensiona solo al inicio según el ROI configurado.
                         try:
                             h, w = img_bgr.shape[:2]
                             builtins.current_img_w = w
                             builtins.current_img_h = h
                             builtins.panel_offset_x = w
+                            # Actualizar w_display y h_display solo la primera vez (para referencia)
+                            if w_display == 1624 and h_display == 1240:  # Valores por defecto iniciales
+                                w_display, h_display = w, h
                         except Exception:
                             pass
                         
@@ -358,7 +410,7 @@ class App:
                             try:
                                 # Mostrar frame con panel usando el módulo dedicado
                                 show_frame_with_panel(out, camera=self.camera, acquisition_running=acquisition_running, 
-                                                   gamma_actual=self.gamma_actual, patron_actual=self.patron_actual, yolo_stats=None)
+                                                   gamma_actual=self.gamma_actual, patron_actual=self.patron_actual, yolo_stats=None, context=self.context)
                             except Exception as e:
                                 log_warning(f"⚠️ Error mostrando imagen: {e}")
                         
@@ -368,11 +420,12 @@ class App:
                         log_warning(f"⚠️ Error en captura: {e}")
                         time.sleep(0.005)
                 else:
-                    # Mostrar pantalla negra cuando está parado
+                    # Mostrar pantalla negra cuando está parado (sin log, ya se mostró al inicio)
                     if not headless:
                         try:
-                            # Mostrar pantalla negra con panel usando el módulo dedicado
-                            show_black_with_panel(w_max, h_max)
+                            # Mostrar pantalla negra con panel usando el tamaño del ROI (no el máximo)
+                            # log_once=True para no mostrar el log repetidamente (ya se mostró al inicio)
+                            show_black_with_panel(w_display, h_display, log_once=True)
                         except Exception as e:
                             log_warning(f"⚠️ Error mostrando pantalla negra: {e}")
                     time.sleep(0.01)

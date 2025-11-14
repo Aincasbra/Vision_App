@@ -172,13 +172,105 @@ def apply_yolo_overlay(
         except Exception:
             pass
 
-    # ROI y línea de decisión (si existe en builtins)
-    # Línea vertical casi al final del ROI (en ancho) para detectar cuando objetos cruzan
+    # NOTA: Línea de decisión legacy eliminada - ya no se usa para validación.
+    # La validación ahora se hace con la línea central de work_zone (ver más abajo).
+    
+    # Dibujar línea central de zona de trabajo (work_zone) desde configuración de cámara
+    # Esta es la línea central (horizontal o vertical) donde el bote debe estar centrado
+    # IMPORTANTE: La línea mostrada aquí es la MISMA que se usa para validar botes
+    # en detection_service.py, garantizando que lo que ves en la UI coincide con
+    # la configuración real que se está usando para procesar
     try:
-        rx, ry, rw, rh = getattr(builtins, "roi", (0, 0, out.shape[1], out.shape[0]))
-        decision_line_x = int(rx + 0.95 * rw)  # 95% del ancho del ROI (muy cerca del final)
-        cv2.line(out, (decision_line_x, ry), (decision_line_x, ry + rh), (0, 255, 255), 1)
-    except Exception:
+        if camera is not None and hasattr(camera, 'config') and camera.config is not None:
+            from model.detection.validation import get_work_zone_from_config
+            work_zone_config = camera.config.get("work_zone", {})
+            if work_zone_config:
+                h, w = out.shape[:2]
+                
+                # Obtener ROI configurado desde camera.config (ya cargado desde config_camera.yaml)
+                roi = None
+                try:
+                    roi_cfg = camera.config.get("roi", {}) if camera.config else {}
+                    if roi_cfg:
+                        offset_x = int(roi_cfg.get("offset_x", 0))
+                        offset_y = int(roi_cfg.get("offset_y", 0))
+                        # Leer valores reales desde la cámara (ya evaluados al aplicar el ROI)
+                        width = int(CameraBackend.safe_get(camera, 'Width', w))
+                        height = int(CameraBackend.safe_get(camera, 'Height', h))
+                        roi = (offset_x, offset_y, width, height)
+                except Exception:
+                    # Si falla, usar None (se calculará desde img_shape)
+                    roi = None
+                
+                work_zone = get_work_zone_from_config(work_zone_config, (h, w), roi=roi)
+                if work_zone:
+                    # Obtener eje y tolerancia
+                    axis = work_zone.get("axis", "vertical").lower()
+                    tolerance = work_zone.get("tolerance", 30)
+                    
+                    # Obtener posición de la línea central (ya calculada en get_work_zone_from_config)
+                    center_position = work_zone.get("center_position")
+                    
+                    if axis == "vertical":
+                        # Línea horizontal: cinta se mueve horizontalmente, validar Y
+                        # Usar posición configurada (offset_y + height/2) o mitad por defecto si no se especificó
+                        if center_position is None:
+                            center_y = h / 2.0
+                        else:
+                            center_y = float(center_position)
+                        
+                        # Dibujar línea central horizontal (verde, más gruesa para mejor visibilidad)
+                        cv2.line(out, (0, int(center_y)), (w, int(center_y)), (0, 255, 0), 2)
+                        
+                        # Dibujar zona de tolerancia (líneas horizontales arriba y abajo de la central)
+                        if tolerance > 0:
+                            # Línea superior (tolerancia)
+                            cv2.line(out, (0, int(center_y - tolerance)), (w, int(center_y - tolerance)), (0, 255, 255), 1)
+                            # Línea inferior (tolerancia)
+                            cv2.line(out, (0, int(center_y + tolerance)), (w, int(center_y + tolerance)), (0, 255, 255), 1)
+                        
+                        # Texto indicativo en el lado izquierdo
+                        cv2.putText(
+                            out,
+                            f"CENTER LINE (Y={int(center_y)}, tol: {tolerance}px)",
+                            (10, int(center_y - tolerance - 10)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (0, 255, 0),
+                            1,
+                            cv2.LINE_AA,
+                        )
+                    else:
+                        # Línea vertical: cinta se mueve verticalmente, validar X
+                        # Usar posición configurada (offset_x + width/2) o mitad por defecto si no se especificó
+                        if center_position is None:
+                            center_x = w / 2.0
+                        else:
+                            center_x = float(center_position)
+                        
+                        # Dibujar línea central vertical (verde, más gruesa para mejor visibilidad)
+                        cv2.line(out, (int(center_x), 0), (int(center_x), h), (0, 255, 0), 2)
+                        
+                        # Dibujar zona de tolerancia (líneas verticales a ambos lados de la central)
+                        if tolerance > 0:
+                            # Línea izquierda (tolerancia)
+                            cv2.line(out, (int(center_x - tolerance), 0), (int(center_x - tolerance), h), (0, 255, 255), 1)
+                            # Línea derecha (tolerancia)
+                            cv2.line(out, (int(center_x + tolerance), 0), (int(center_x + tolerance), h), (0, 255, 255), 1)
+                        
+                        # Texto indicativo en la parte superior
+                        cv2.putText(
+                            out,
+                            f"CENTER LINE (X={int(center_x)}, tol: {tolerance}px)",
+                            (int(center_x - 100), 20),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (0, 255, 0),
+                            1,
+                            cv2.LINE_AA,
+                        )
+    except Exception as e:
+        # Silenciar errores de visualización (no crítico)
         pass
 
     if len(xyxy) == 0:
@@ -192,18 +284,41 @@ def apply_yolo_overlay(
         lids = np.arange(len(xyxy), dtype=int) + 1
 
     # Dibujo de cajas e IDs
+    # Color de la caja indica si el bote está dentro de la zona de trabajo:
+    # - Verde: dentro de la zona (tids/lids = 0, se procesará)
+    # - Amarillo: fuera de la zona o en cooldown (tids/lids = -1, solo visualización)
     try:
         for i, (box, rid, lid) in enumerate(zip(xyxy, tids, lids)):
             x1, y1, x2, y2 = map(int, box)
             key_id = int(lid) if (lid is not None and int(lid) >= 0) else int(rid)
-            cv2.rectangle(out, (x1, y1), (x2, y2), (0, 200, 0), 2)
+            
+            # Determinar color según si está dentro de la zona de trabajo
+            # tids/lids = 0 significa que se procesará (dentro de zona y válido)
+            # tids/lids = -1 significa que NO se procesará (fuera de zona o en cooldown)
+            is_in_work_zone = (rid is not None and int(rid) >= 0) or (lid is not None and int(lid) >= 0)
+            box_color = (0, 255, 0) if is_in_work_zone else (0, 255, 255)  # Verde o Amarillo
+            text_color = (0, 255, 0) if is_in_work_zone else (0, 255, 255)
+            status_text = "OK" if is_in_work_zone else "OUT"
+            
+            # Dibujar bounding box
+            cv2.rectangle(out, (x1, y1), (x2, y2), box_color, 2)
+            
+            # Dibujar centro del bounding box (cruz) para verificar centrado
+            cx = int((x1 + x2) / 2.0)
+            cy = int((y1 + y2) / 2.0)
+            # Cruz más grande para mejor visibilidad
+            cross_size = 8
+            cv2.line(out, (cx - cross_size, cy), (cx + cross_size, cy), box_color, 2)
+            cv2.line(out, (cx, cy - cross_size), (cx, cy + cross_size), box_color, 2)
+            
+            # Texto con información del bote
             cv2.putText(
                 out,
-                f"ID:{key_id}",
+                f"ID:{key_id} {status_text}",
                 (x1, max(15, y1 - 10)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
-                (0, 200, 0),
+                text_color,
                 2,
                 cv2.LINE_AA,
             )

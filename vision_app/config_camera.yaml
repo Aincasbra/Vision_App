@@ -1,0 +1,116 @@
+# Configuración del área de trabajo (ROI) de la cámara
+# Permite ajustar fácilmente para diferentes fábricas/configuraciones
+
+# ============================================================================
+# CONFIGURACIÓN DE PARÁMETROS DE CÁMARA (Exposición, Gain, FPS)
+# ============================================================================
+# Estos valores se aplican automáticamente al abrir la cámara.
+# Funcionan tanto en modo debug como en systemd (modo continuo).
+
+camera_params:
+  # Tiempo de exposición en microsegundos (µs)
+  # Mismas unidades que se muestran en la ventana INFO (ExposureTime)
+  # Valores típicos: 1000-20000 µs (1-20 ms)
+  exposure_time_us: 2408.0
+  
+  # Ganancia en dB (decibelios)
+  # Mismas unidades que se muestran en la ventana INFO (Gain)
+  # Valores típicos: 0-50 dB
+  gain_db: 36.0
+  
+  # FPS (frames por segundo)
+  # Mismas unidades que se muestran en la ventana INFO (AcqFrameRate)
+  # Valores típicos: 10-30 FPS
+  fps: 28.7
+  
+  # Modo de exposición (solo GenICam)
+  # Valores: "Off" (manual), "Once" (auto una vez), "Continuous" (auto continuo)
+  exposure_auto: "Off"
+  
+  # Modo de ganancia (solo GenICam)
+  # Valores: "Off" (manual), "Once" (auto una vez), "Continuous" (auto continuo)
+  gain_auto: "Off"
+
+roi:
+  # Modo: "full" (frame completo) o "custom" (personalizado)
+  mode: "custom"
+  
+  # Si mode="custom", se pueden usar porcentajes o valores absolutos
+  # Usar porcentajes (0.0 a 1.0) relativo a HeightMax/WidthMax:
+  #   offset_y_percent: 0.0    # Inicio vertical (0.0 = arriba, 1.0 = abajo)
+  #   height_percent: 1.0      # Altura del ROI (1.0 = altura completa)
+  #   offset_x_percent: 0.0    # Inicio horizontal (0.0 = izquierda, 1.0 = derecha)
+  #   width_percent: 0.5       # Ancho del ROI (0.5 = mitad del ancho)
+  
+  # Valores absolutos en píxeles (tienen prioridad sobre porcentajes si están definidos):
+  # Puedes usar expresiones relativas a las dimensiones máximas de la cámara:
+  #   - "WidthMax/2" o "max/2" = mitad del ancho máximo
+  #   - "HeightMax" o "max" = altura máxima completa
+  #   - O valores numéricos directos en píxeles
+  offset_x: 0              # Offset X en píxeles (0 = empezar desde la izquierda)
+  offset_y: 0              # Offset Y en píxeles (0 = empezar desde arriba)
+  width: "WidthMax"      # Expresión: mitad del ancho máximo de la cámara (se calcula automáticamente)
+  height: "HeightMax"      # Expresión: altura máxima completa de la cámara (se calcula automáticamente)
+
+# ============================================================================
+# CONFIGURACIÓN DE ZONA DE TRABAJO Y VALIDACIÓN DE BOTES
+# ============================================================================
+# Esta configuración se carga automáticamente cuando se abre la cámara.
+# Cada cámara puede tener su propia configuración (ver sección "cameras" abajo).
+
+# Configuración GLOBAL (aplica a todas las cámaras por defecto)
+# ----------------------------------------------------------------------------
+work_zone:
+  # Validación simplificada: línea central (horizontal o vertical) donde el bote debe estar centrado
+  # Cuando el centro del bounding box cruza esa línea (con tolerancia), el bote está centrado.
+  # 
+  # Eje de validación (dirección de movimiento de la cinta):
+  #   - "vertical": Línea horizontal (cinta se mueve horizontalmente, valida centro Y del bote)
+  #   - "horizontal": Línea vertical (cinta se mueve verticalmente, valida centro X del bote)
+  # 
+  # La línea central se calcula automáticamente:
+  #   - Si axis="vertical": centro de la altura del ROI (img_h / 2)
+  #   - Si axis="horizontal": centro del ancho del ROI (img_w / 2)
+  # 
+  # Tolerancia: distancia máxima permitida desde la línea central (en píxeles)
+  # Valores típicos: 20-50px (depende del tamaño del bote y velocidad de la cinta)
+  axis: "vertical"        # "vertical" = línea horizontal (cinta horizontal), "horizontal" = línea vertical (cinta vertical)
+  tolerance: 20           # Tolerancia en píxeles desde la línea central
+  # radius: 50            # (legacy, se usa como tolerance si tolerance no está definido)
+
+# Configuración de tamaños de bote esperados (OPCIONAL)
+# Si no se especifica esta sección, se usan valores por defecto (60-95px)
+# Valida que el bote detectado tenga el tamaño correcto (87px o 67px con tolerancia)
+# Valores por defecto si no se configura:
+#   min_width: 60, max_width: 95, min_height: 60, max_height: 95, margin: 5
+bottle_sizes:
+  min_width: 100        # Ancho mínimo en píxeles (ajustar según tamaño real del bote)
+  max_width: 1000           # Ancho máximo en píxeles (ajustar según tamaño real del bote)
+  min_height: 100          # Altura mínima en píxeles (ajustar según tamaño real del bote)
+  max_height: 1600          # Altura máxima en píxeles (ajustar según tamaño real del bote)
+  margin: 10               # Margen de borde para validar que está completo (píxeles)
+
+# Configuración POR CÁMARA (opcional - sobrescribe configuración global)
+# ----------------------------------------------------------------------------
+# Si usas múltiples cámaras, cada una puede tener su propia zona de trabajo.
+# Ejemplo:
+# cameras:
+#   0:  # Cámara índice 0 (primera cámara)
+#     work_zone:
+#       center_x: 812      # Centro específico para esta cámara
+#       center_y: 620
+#       radius: 50
+#     bottle_sizes:
+#       min_width: 60
+#       max_width: 95
+#   1:  # Cámara índice 1 (segunda cámara)
+#     work_zone:
+#       center_x: 1000     # Diferente zona de trabajo
+#       center_y: 500
+#       radius: 60         # Radio más grande
+#     bottle_sizes:
+#       min_width: 55      # Tamaños diferentes
+#       max_width: 100
+
+
+

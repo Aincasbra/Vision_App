@@ -8,7 +8,7 @@ Aplicación modular de visión por computador para Jetson (YOLO + cámaras GenIC
 vision_app/
 ├── app.py                    # Orquestador principal (inicialización y bucle principal)
 ├── main.py                   # Punto de entrada (usado por systemd)
-├── config_yolo.yaml          # Configuración YOLO (modelo, thresholds, clases)
+├── config_model.yaml         # Configuración de modelos (YOLO y Clasificador)
 ├── core/                     # Módulos centrales
 │   ├── settings.py           # Configuración (YAML + env vars) y AppContext
 │   ├── logging.py            # Sistema de logging multi-dominio
@@ -136,15 +136,25 @@ La aplicación está diseñada con separación clara de responsabilidades:
 
 ## ⚙️ Configuración
 
-### Archivo YAML (`config_yolo.yaml`)
+### Archivo YAML (`config_model.yaml`)
+
+Este archivo contiene la configuración de ambos modelos (YOLO y Clasificador):
 
 ```yaml
+# Configuración de YOLO (detección de objetos)
 yolo:
   model_path: "/home/nvidia/Desktop/Vision_App/vision_app/v2_yolov8n_HERMASA_finetune.pt"
-  image_size: 416
+  image_size: [416, 416]
   confidence_threshold: 0.3
   iou_threshold: 0.45
-  classes: [0, 1]  # can, hand
+  classes: ["can", "hand"]
+
+# Configuración del Clasificador (clasificación de botes)
+classifier:
+  model_path: "clasificador_multiclase_torch.pt"
+  confidence_threshold: 0.70
+  bad_threshold: 0.87
+  classes: ["buenas", "malas", "defectuosas"]
 ```
 
 ### Variables de Entorno
@@ -152,7 +162,7 @@ yolo:
 #### Ejecución
 - `HEADLESS=1`: No crea UI, auto-enfila `RUN`
 - `AUTO_RUN=1`: Auto-enfila `RUN` aunque exista UI
-- `CONFIG_YOLO`: Ruta al archivo YAML de configuración
+- `CONFIG_MODEL`: Ruta al archivo YAML de configuración de modelos
 
 #### Cámara
 - `CAMERA_BACKEND=auto|aravis|onvif`: Backend de cámara (default: auto)
@@ -323,7 +333,7 @@ RestartSec=5
 Environment=HEADLESS=1
 Environment=AUTO_RUN=1
 Environment=PYTHONPATH=/home/nvidia/Desktop/Vision_App/vision_app:/usr/lib/python3/dist-packages
-Environment=CONFIG_YOLO=/home/nvidia/Desktop/Vision_App/vision_app/config_yolo.yaml
+Environment=CONFIG_MODEL=/home/nvidia/Desktop/Vision_App/vision_app/config_model.yaml
 Environment=LOG_TO_SYSLOG=0
 Environment=LOG_TO_FILE=1
 Environment=LOG_DIR=/var/log/vision_app
@@ -390,7 +400,7 @@ sudo journalctl -u vision-app.service -n 100 --no-pager
 - Verificar permisos de cámara: `ls -l /dev/video*`
 
 ### Modelo no carga
-- Verificar ruta en `config_yolo.yaml`
+- Verificar ruta en `config_model.yaml`
 - Verificar que el archivo existe: `ls -lh vision_app/v2_yolov8n_HERMASA_finetune.pt`
 - Revisar logs de inicialización
 

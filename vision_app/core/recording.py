@@ -183,10 +183,31 @@ class ImagesManager:
             self._maybe_zip_previous_day(now)
             self._rollover_csv(now)
 
-    def _save_image(self, image_bgr, img_type: str, reason: str = "", avg_conf: float = 0.0, cls: str = "", track_id: int = -1) -> str:
+    def _save_image(self, image_bgr, img_type: str, reason: str = "", avg_conf: float = 0.0, cls: str = "", track_id: int = -1, subfolder: str = None) -> str:
+        """
+        Guarda una imagen en el directorio de imágenes.
+        
+        Args:
+            image_bgr: Imagen BGR a guardar
+            img_type: Tipo de imagen ("good", "bad", etc.)
+            reason: Razón de la clasificación
+            avg_conf: Confianza promedio
+            cls: Clase detectada
+            track_id: ID de tracking (legacy)
+            subfolder: Subcarpeta opcional dentro del día (ej: "clasificado")
+        
+        Returns:
+            Ruta del archivo guardado o cadena vacía si falla
+        """
         now = datetime.now()
         self._ensure_day(now)
         day_dir = os.path.join(self.base_dir, now.strftime("%Y-%m-%d"))
+        
+        # Si se especifica subcarpeta, crear dentro del día
+        if subfolder:
+            day_dir = os.path.join(day_dir, subfolder)
+            os.makedirs(day_dir, exist_ok=True)
+        
         ts = now.strftime("%H%M%S")
         ms = int((time.time()*1000) % 1000)
         fname = f"{img_type}_{ts}_{ms:03d}.jpg"
@@ -210,11 +231,68 @@ class ImagesManager:
         return ""
 
     def save_bad(self, image_bgr, reason: str = "", avg_conf: float = 0.0, cls: str = "", track_id: int = -1) -> str:
+        """Guarda una imagen clasificada como 'bad' (mala/defectuosa).
+        
+        Args:
+            image_bgr: Imagen BGR completa a guardar
+            reason: Razón de la clasificación (ej: "clf:malas")
+            avg_conf: Confianza promedio del clasificador
+            cls: Clase detectada (ej: "malas", "defectuosas")
+            track_id: ID de tracking (legacy, no usado)
+            
+        Returns:
+            Ruta del archivo guardado o cadena vacía si falla
+        """
         return self._save_image(image_bgr, "bad", reason, avg_conf, cls, track_id)
 
+    def save_good(self, image_bgr, reason: str = "", avg_conf: float = 0.0, cls: str = "", track_id: int = -1) -> str:
+        """Guarda una imagen clasificada como 'good' (buena).
+        
+        Args:
+            image_bgr: Imagen BGR completa a guardar
+            reason: Razón de la clasificación (ej: "clf:buenas")
+            avg_conf: Confianza promedio del clasificador
+            cls: Clase detectada (ej: "buenas")
+            track_id: ID de tracking (legacy, no usado)
+            
+        Returns:
+            Ruta del archivo guardado o cadena vacía si falla
+        """
+        return self._save_image(image_bgr, "good", reason, avg_conf, cls, track_id)
+
     def save_good_periodic(self, image_bgr) -> Optional[str]:
+        """Guarda una imagen 'good' periódicamente (cada intervalo configurado).
+        
+        DEPRECATED: Usar save_good() directamente para guardar todas las buenas procesadas.
+        Este método se mantiene para compatibilidad pero ya no se usa en el flujo principal.
+        
+        Args:
+            image_bgr: Imagen BGR completa a guardar
+            
+        Returns:
+            Ruta del archivo guardado o None si no se guardó (por intervalo)
+        """
         now = time.time()
         if (now - self._last_good_ts) >= self.good_interval.total_seconds():
             self._last_good_ts = now
             return self._save_image(image_bgr, "good", "periodic")
         return None
+
+    def save_classification_crop(self, crop_bgr, img_type: str, reason: str = "", avg_conf: float = 0.0, cls: str = "") -> str:
+        """Guarda un crop usado para clasificación en la subcarpeta "clasificado".
+        
+        Este método guarda los crops (recortes) de los botes que se usan para clasificar.
+        Se guardan en una subcarpeta "clasificado" dentro de la carpeta del día para facilitar
+        la verificación y debugging.
+        
+        Args:
+            crop_bgr: Crop BGR del bote usado para clasificación
+            img_type: Tipo de imagen ("good" o "bad")
+            reason: Razón de la clasificación (ej: "crop_clf:buenas")
+            avg_conf: Confianza promedio del clasificador
+            cls: Clase detectada (ej: "buenas", "malas")
+            
+        Returns:
+            Ruta del archivo guardado o cadena vacía si falla
+        """
+        return self._save_image(crop_bgr, img_type, reason, avg_conf, cls, track_id=-1, subfolder="clasificado")

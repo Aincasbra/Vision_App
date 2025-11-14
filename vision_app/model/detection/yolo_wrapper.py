@@ -9,8 +9,7 @@ YOLO Wrapper (encapsulación de Ultralytics YOLO)
   * Soporta modelos PyTorch y TensorRT (.engine)
   * Gestiona dispositivo CUDA/CPU automáticamente
 - Llamado desde:
-  * `model/detection/config.py`: `load_yolo_model()` crea instancia de `YOLOPyTorchCUDA`
-  * `model/detection/detection_service.py`: usa `predict()` para ejecutar inferencias YOLO
+  * `model/detection/detection_service.py`: crea instancia de `YOLOPyTorchCUDA` y usa `predict()` para ejecutar inferencias YOLO
 """
 from typing import List, Dict
 import os

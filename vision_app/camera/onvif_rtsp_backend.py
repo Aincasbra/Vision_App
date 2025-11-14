@@ -21,7 +21,7 @@ import time
 import cv2
 import numpy as np
 
-from .device_manager import CameraBackend
+from .device_manager import CameraBackend, get_camera_config
 from core.logging import log_info, log_warning
 
 
@@ -43,6 +43,12 @@ class OnvifRtspBackend(CameraBackend):
         if not self.cap or not self.cap.isOpened():
             raise RuntimeError(f"No se pudo abrir RTSP: {self.rtsp_url}")
         log_info(f"📡 ONVIF/RTSP abierto: {self.rtsp_url}")
+        # Cargar configuración específica de esta cámara (work_zone, bottle_sizes, etc.)
+        try:
+            self.config = get_camera_config(self.index)
+        except Exception as e:
+            log_warning(f"⚠️ No se pudo cargar configuración de cámara {self.index}: {e}", logger_name="system")
+            self.config = {}
         return self
 
     def stop(self) -> None:

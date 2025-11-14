@@ -1,0 +1,18 @@
+classifier:
+  bad_threshold: 0.7
+  classes:
+  - buenas
+  - malas
+  - defectuosas
+  model_path: clasificador_multiclase_torch.pt
+yolo:
+  classes:
+  - can
+  - hand
+  confidence_threshold: 0.7
+  image_size:
+  - 416
+  - 416
+  iou_threshold: 0.45
+  model: /home/nvidia/Desktop/Vision_App/vision_app/v2_yolov8n_HERMASA_finetune.pt
+  model_path: /home/nvidia/Desktop/Vision_App/vision_app/v2_yolov8n_HERMASA_finetune.pt

@@ -25,8 +25,8 @@ import gi
 gi.require_version("Aravis", "0.6")
 from gi.repository import Aravis, GLib
 
-from typing import Any
-from .device_manager import CameraBackend
+from typing import Any, Tuple, Optional
+from .device_manager import CameraBackend, get_camera_config
 from core.logging import log_info, log_warning, log_debug
 
 
@@ -48,6 +48,136 @@ class AravisBackend(CameraBackend):
         self._stat_last_t = time.time()
         self._stat_frames_acc = 0
         self._stat_bytes_acc = 0
+    
+    @staticmethod
+    def _align_dimension(v: int, m: int = 8) -> int:
+        """Alinea una dimensión a múltiplo de m (típicamente 8 para alineación de píxeles)."""
+        return int(v) // m * m
+    
+    @staticmethod
+    def _even_dimension(v: int) -> int:
+        """Asegura que una dimensión sea par (requerido para algunas cámaras)."""
+        return (int(v) // 2) * 2
+    
+    @staticmethod
+    def _eval_dimension_expression(value: Any, max_dim: int) -> Optional[int]:
+        """
+        Evalúa expresiones relativas a dimensiones máximas de la cámara.
+        
+        Soporta expresiones como:
+        - "WidthMax/2" o "max/2" → calcula max_dim / 2
+        - "HeightMax" o "max" → usa max_dim directamente
+        - Valores numéricos → se devuelven directamente
+        
+        Args:
+            value: Valor del config (puede ser int, float, str con expresión, o None)
+            max_dim: Dimensión máxima de la cámara (WidthMax o HeightMax)
+        
+        Returns:
+            Valor calculado en píxeles, o None si no se puede evaluar
+        """
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            # Normalizar: convertir a minúsculas y quitar espacios
+            expr = value.strip().lower()
+            
+            # Reemplazar referencias comunes
+            expr = expr.replace("widthmax", str(max_dim))
+            expr = expr.replace("heightmax", str(max_dim))
+            expr = expr.replace("max", str(max_dim))
+            
+            # Evaluar expresión matemática simple (solo operaciones básicas)
+            try:
+                # Permitir expresiones como "max/2", "WidthMax/2", etc.
+                result = eval(expr, {"__builtins__": {}}, {})
+                return int(result)
+            except Exception:
+                # Si falla, intentar convertir directamente
+                try:
+                    return int(value)
+                except Exception:
+                    return None
+        return None
+    
+    def _get_roi_config(self, h_max: int, w_max: int) -> Tuple[int, int, int, int]:
+        """
+        Calcula el ROI basado en la configuración de la cámara.
+        
+        Usa self.config que ya fue cargado en open(). Si no está disponible,
+        intenta cargarlo automáticamente.
+        
+        Args:
+            h_max: Altura máxima de la cámara
+            w_max: Ancho máximo de la cámara
+            
+        Returns:
+            Tupla (offset_x, offset_y, width, height) en píxeles
+        """
+        try:
+            # Usar self.config si está disponible (ya cargado en open())
+            if self.config is None:
+                self.config = get_camera_config(self.index)
+            roi_cfg = self.config.get("roi", {}) if self.config else {}
+            mode = roi_cfg.get("mode", "full")
+            
+            if mode == "full":
+                # Frame completo
+                return (0, 0, self._align_dimension(w_max, 8), self._even_dimension(max(self._align_dimension(h_max, 8), 64)))
+            
+            elif mode == "custom":
+                # ROI personalizado
+                # Valores por defecto para offsets
+                offset_x = int(roi_cfg.get("offset_x", 0))
+                offset_y = int(roi_cfg.get("offset_y", 0))
+                
+                # Obtener valores de width y height del config
+                # Si están especificados y son válidos, usar valores absolutos (con evaluación de expresiones)
+                # Si no están especificados o son None/null, usar porcentajes del config
+                width_val = roi_cfg.get("width")
+                height_val = roi_cfg.get("height")
+                
+                # Solo usar valores absolutos si ambos están especificados y son válidos
+                if width_val is not None and height_val is not None:
+                    width = self._eval_dimension_expression(width_val, w_max)
+                    height = self._eval_dimension_expression(height_val, h_max)
+                    
+                    # Si ambos se evaluaron correctamente, usar valores absolutos
+                    if width is not None and height is not None:
+                        result = (
+                            self._align_dimension(offset_x, 8),
+                            self._even_dimension(self._align_dimension(offset_y, 8)),
+                            self._align_dimension(width, 8),
+                            self._even_dimension(max(self._align_dimension(height, 8), 64))
+                        )
+                        return result
+                    # Si alguno falló al evaluar, continuar con porcentajes
+                
+                # Usar porcentajes del config (valores por defecto vienen del config, no hardcodeados)
+                offset_y_percent = roi_cfg.get("offset_y_percent", 0.0)
+                height_percent = roi_cfg.get("height_percent", 1.0)
+                offset_x_percent = roi_cfg.get("offset_x_percent", 0.0)
+                width_percent = roi_cfg.get("width_percent", 1.0)
+                
+                y1 = self._even_dimension(self._align_dimension(h_max * offset_y_percent, 8))
+                y2 = self._even_dimension(self._align_dimension(h_max * (offset_y_percent + height_percent), 8))
+                new_h = self._even_dimension(max(self._align_dimension(y2 - y1, 8), 64))
+                
+                x1 = self._align_dimension(w_max * offset_x_percent, 8)
+                x2 = self._align_dimension(w_max * (offset_x_percent + width_percent), 8)
+                new_w = self._align_dimension(x2 - x1, 8)
+                
+                return (x1, y1, new_w, new_h)
+            else:
+                # Modo desconocido, usar frame completo
+                log_warning(f"⚠️ Modo ROI desconocido: {mode}, usando frame completo", logger_name="system")
+                return (0, 0, self._align_dimension(w_max, 8), self._even_dimension(max(self._align_dimension(h_max, 8), 64)))
+        except Exception as e:
+            log_warning(f"⚠️ Error leyendo configuración ROI: {e}, usando frame completo", logger_name="system")
+            # Fallback a frame completo
+            return (0, 0, self._align_dimension(w_max, 8), self._even_dimension(max(self._align_dimension(h_max, 8), 64)))
 
     def _try_pop(self, poll_us=20000):
         try:
@@ -138,6 +268,14 @@ class AravisBackend(CameraBackend):
         return False
 
     def open(self):
+        # Cargar configuración de cámara ANTES de aplicar parámetros
+        # Esto permite que los valores de exposición/FPS se lean desde config_camera.yaml
+        try:
+            self.config = get_camera_config(self.index)
+        except Exception as e:
+            log_warning(f"⚠️ No se pudo cargar configuración de cámara {self.index}: {e}", logger_name="system")
+            self.config = {}
+        
         Aravis.update_device_list()
         n = Aravis.get_n_devices()
         if n <= 0:
@@ -210,11 +348,35 @@ class AravisBackend(CameraBackend):
         except Exception:
             pass
         
+        # Aplicar configuración de parámetros de cámara desde config_camera.yaml
+        # La fuente de verdad es config_camera.yaml (sección camera_params)
+        # Si no existe configuración, usar valores por defecto como fallback de seguridad
         try:
-            try:
-                self.dev.set_string_feature_value("TriggerMode", "Off")
-            except Exception:
-                pass
+            camera_params = self.config.get("camera_params", {}) if self.config else {}
+            # Leer desde config_camera.yaml (valores por defecto solo como fallback si no existe YAML)
+            exposure_time_us = float(camera_params.get("exposure_time_us", 9000.0))
+            gain_db = float(camera_params.get("gain_db", 50.0))
+            fps = float(camera_params.get("fps", 15.0))
+            exposure_auto = str(camera_params.get("exposure_auto", "Off"))
+            gain_auto = str(camera_params.get("gain_auto", "Off"))
+        except Exception:
+            # Fallback de seguridad: solo si hay error al leer configuración
+            # NOTA: Estos valores deberían estar en config_camera.yaml, estos son solo emergencia
+            log_warning("⚠️ No se pudo leer camera_params desde config_camera.yaml, usando valores por defecto", logger_name="system")
+            exposure_time_us = 9000.0
+            gain_db = 50.0
+            fps = 15.0
+            exposure_auto = "Off"
+            gain_auto = "Off"
+        
+        # Configurar TriggerMode
+        try:
+            self.dev.set_string_feature_value("TriggerMode", "Off")
+        except Exception:
+            pass
+        
+        # Configurar FPS
+        try:
             for enabler in ("AcquisitionFrameRateEnable",):
                 try:
                     self.dev.set_integer_feature_value(enabler, 1)
@@ -224,24 +386,30 @@ class AravisBackend(CameraBackend):
                     except Exception:
                         pass
             try:
-                self.dev.set_float_feature_value("AcquisitionFrameRate", 15.0)
+                self.dev.set_float_feature_value("AcquisitionFrameRate", fps)
             except Exception:
                 try:
-                    self.dev.set_integer_feature_value("AcquisitionFrameRate", 15)
+                    self.dev.set_integer_feature_value("AcquisitionFrameRate", int(fps))
                 except Exception:
                     pass
         except Exception:
             pass
         
+        # Configurar exposición y ganancia
         try:
-            self.dev.set_string_feature_value("ExposureAuto", "Off")
-            self.dev.set_string_feature_value("ExposureMode", "Timed")
-            self.dev.set_float_feature_value("ExposureTime", 9000.0)
-            self.dev.set_float_feature_value("Gain", 50.0)
+            self.dev.set_string_feature_value("ExposureAuto", exposure_auto)
+            if exposure_auto == "Off":
+                self.dev.set_string_feature_value("ExposureMode", "Timed")
+                self.dev.set_float_feature_value("ExposureTime", exposure_time_us)
+            
+            self.dev.set_string_feature_value("GainAuto", gain_auto)
+            if gain_auto == "Off":
+                self.dev.set_float_feature_value("Gain", gain_db)
+            
             self.dev.set_string_feature_value("BalanceWhiteAuto", "Off")
-            log_info("Configuración básica aplicada: ExposureTime=9000.0 µs, Gain=50.0 dB, FPS=15.0", logger_name="system")
+            log_info(f"✅ Configuración de cámara aplicada: ExposureTime={exposure_time_us} µs, Gain={gain_db} dB, FPS={fps} (desde config_camera.yaml)", logger_name="system")
         except Exception as e:
-            log_warning(f"Aviso al aplicar configuración básica: {e}", logger_name="system")
+            log_warning(f"⚠️ Aviso al aplicar configuración de cámara: {e}", logger_name="system")
         
         # Configuraciones específicas del backend (GigE)
         try:
@@ -253,26 +421,25 @@ class AravisBackend(CameraBackend):
         if self.stream is None:
             raise RuntimeError("create_stream() failed")
         try:
-            def _align(v, m=8):
-                return int(v) // m * m
-            def _even2(v):
-                return (int(v) // 2) * 2
+            # Obtener resolución máxima de la cámara (valores reales sin configurar)
             h_max = int(self.dev.get_integer_feature_value("HeightMax"))
             w_max = int(self.dev.get_integer_feature_value("WidthMax"))
-            y1 = _even2(_align(h_max * 0.30, 8))
-            y2 = _even2(_align(h_max * 0.82, 8))
-            new_h = _even2(max(_align(y2 - y1, 8), 64))
-            new_w = _align(w_max, 8)
-            self.dev.set_integer_feature_value("OffsetX", 0)
-            self.dev.set_integer_feature_value("OffsetY", int(y1))
-            self.dev.set_integer_feature_value("Width",   int(new_w))
-            self.dev.set_integer_feature_value("Height",  int(new_h))
+            log_info(f"📷 Resolución máxima de la cámara: WidthMax={w_max}px, HeightMax={h_max}px", logger_name="system")
+            
+            # Obtener ROI desde configuración
+            offset_x, offset_y, new_w, new_h = self._get_roi_config(h_max, w_max)
+            log_info(f"📷 ROI configurado (desde config_camera.yaml): Width={new_w}px, Height={new_h}px, OffsetX={offset_x}px, OffsetY={offset_y}px", logger_name="system")
+            
+            self.dev.set_integer_feature_value("OffsetX", offset_x)
+            self.dev.set_integer_feature_value("OffsetY", offset_y)
+            self.dev.set_integer_feature_value("Width",   new_w)
+            self.dev.set_integer_feature_value("Height",  new_h)
             try:
                 import builtins
-                builtins.offsetY = int(y1)
+                builtins.offsetY = offset_y
             except Exception:
                 pass
-            log_debug(f"ROI/open Región aplicada: X=0 Y={int(y1)} W={int(new_w)} H={int(new_h)}", logger_name="system")
+            log_debug(f"ROI/open Región aplicada: X={offset_x} Y={offset_y} W={new_w} H={new_h}", logger_name="system")
         except Exception as e:
             log_warning(f"ROI/open No se pudo aplicar ROI en open: {e}", logger_name="system")
         self.payload = self.camera.get_payload()
@@ -293,25 +460,21 @@ class AravisBackend(CameraBackend):
                 self.pixfmt = self.dev.get_string_feature_value("PixelFormat")
             except Exception:
                 pass
+        # La configuración ya se cargó al inicio de open() para poder aplicar parámetros
+        # (exposición, FPS, work_zone, bottle_sizes, etc.) desde config_camera.yaml
         return self
 
     def start(self):
         if not self.started:
             try:
-                def align(v, m=8):
-                    return int(v) // m * m
-                def even2(v):
-                    return (int(v) // 2) * 2
                 h_max = int(self.dev.get_integer_feature_value("HeightMax"))
                 w_max = int(self.dev.get_integer_feature_value("WidthMax"))
-                y1 = even2(align(h_max * 0.38, 8))
-                y2 = even2(align(h_max * 0.78, 8))
-                new_h = even2(max(align(y2 - y1, 8), 64))
-                new_w = align(w_max, 8)
-                self.dev.set_integer_feature_value("OffsetX", 0)
-                self.dev.set_integer_feature_value("OffsetY", int(y1))
-                self.dev.set_integer_feature_value("Width",   int(new_w))
-                self.dev.set_integer_feature_value("Height",  int(new_h))
+                # Obtener ROI desde configuración
+                offset_x, offset_y, new_w, new_h = self._get_roi_config(h_max, w_max)
+                self.dev.set_integer_feature_value("OffsetX", offset_x)
+                self.dev.set_integer_feature_value("OffsetY", offset_y)
+                self.dev.set_integer_feature_value("Width",   new_w)
+                self.dev.set_integer_feature_value("Height",  new_h)
                 try:
                     if self.started:
                         self.camera.stop_acquisition()
@@ -342,10 +505,10 @@ class AravisBackend(CameraBackend):
                     pass
                 try:
                     import builtins
-                    builtins.offsetY = int(y1)
+                    builtins.offsetY = offset_y
                 except Exception:
                     pass
-                log_debug(f"ROI/backend Región aplicada: X=0 Y={int(y1)} W={int(new_w)} H={int(new_h)}", logger_name="system")
+                log_debug(f"ROI/backend Región aplicada: X={offset_x} Y={offset_y} W={new_w} H={new_h}", logger_name="system")
             except Exception as e:
                 log_warning(f"ROI/backend No se pudo aplicar ROI antes de start: {e}", logger_name="system")
             try:

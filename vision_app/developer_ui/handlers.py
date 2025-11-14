@@ -22,21 +22,16 @@ def handle_action(app, action):
     """Despacha acciones del panel. 'app' es instancia de App."""
     from core.logging import log_info, log_warning, log_error
     if action == "RUN":
-        # Configurar ROI para captura (solo GenICam/Aravis)
+        # El ROI ya se configura automáticamente en camera.start() desde config_camera.yaml
+        # Solo guardamos el offsetY en builtins para compatibilidad con código existente
         try:
-            # Verificar si el backend soporta set_roi (GenICam/Aravis)
-            if hasattr(app.camera, 'set_roi'):
-                def align(v, m=8):
-                    return int(v) // m * m
-                h_max = int(CameraBackend.safe_get(app.camera, 'HeightMax', CameraBackend.safe_get(app.camera, 'Height', 1240)))
-                w_max = int(CameraBackend.safe_get(app.camera, 'WidthMax', CameraBackend.safe_get(app.camera, 'Width', 1624)))
-                y1 = align(h_max * 0.50, 8)
-                y2 = align(h_max * 0.9, 8)
-                new_h = max(align(y2 - y1, 8), 64)
-                new_w = align(w_max, 8)
-                app.camera.set_roi(0, y1, new_w, new_h)
-                builtins.offsetY = int(y1)
-                builtins.roi = (0, int(y1), int(new_w), int(new_h))
+            if hasattr(app.camera, 'get_node_value'):
+                offset_y = CameraBackend.safe_get(app.camera, 'OffsetY', 0)
+                width = CameraBackend.safe_get(app.camera, 'Width', 1624)
+                height = CameraBackend.safe_get(app.camera, 'Height', 1240)
+                offset_x = CameraBackend.safe_get(app.camera, 'OffsetX', 0)
+                builtins.offsetY = int(offset_y)
+                builtins.roi = (int(offset_x), int(offset_y), int(width), int(height))
         except Exception:
             pass
         try:
@@ -111,7 +106,7 @@ def handle_action(app, action):
 
     if action == "CONFIG":
         try:
-            _show_config_window(app.camera)
+            _show_config_window(app.camera, app)
         except Exception as e:
             log_warning(f"⚠️ Error abriendo CONFIG: {e}")
         return {}
@@ -320,12 +315,20 @@ def _show_info_window(camera):
         _info_open = False
 
 
-def _show_config_window(camera):
-    """CONFIG modal (hilo principal) con sliders y teclas, robusto para GTK/X."""
+def _show_config_window(camera, app=None):
+    """CONFIG modal (hilo principal) con sliders y teclas, robusto para GTK/X.
+    
+    Args:
+        camera: Instancia de cámara
+        app: Instancia de App (opcional, para acceder a configuración de modelos)
+    """
     import cv2
     import numpy as np
-    from core.logging import log_info, log_warning
+    import yaml
+    import os
+    from core.logging import log_info, log_warning, log_error
     from camera.device_manager import CameraBackend
+    from core.settings import load_yaml_config
     global _config_open
     if _config_open:
         return
@@ -425,6 +428,22 @@ def _show_config_window(camera):
             orig_expo = expo_us
             orig_gain = gain_db
             orig_fps = fps
+            
+            # Cargar valores de confianza desde config_model.yaml
+            try:
+                config_model = load_yaml_config("config_model.yaml", silent=True)
+                yolo_cfg = config_model.get("yolo", {})
+                classifier_cfg = config_model.get("classifier", {})
+                yolo_conf = float(yolo_cfg.get("confidence_threshold", 0.30))
+                classifier_conf = float(classifier_cfg.get("bad_threshold", 0.70))  # Usar bad_threshold en lugar de confidence_threshold
+            except Exception as e:
+                log_warning(f"⚠️ Error cargando confianzas desde config: {e}")
+                yolo_conf = 0.30
+                classifier_conf = 0.70
+            
+            # Guardar originales de confianza
+            orig_yolo_conf = yolo_conf
+            orig_classifier_conf = classifier_conf
 
             win = "Config"
             # Limpieza defensiva por si quedó colgada
@@ -446,6 +465,9 @@ def _show_config_window(camera):
             cv2.createTrackbar('Exposure', win, to_pos(expo_us, et_min, et_max), 1000, lambda v: None)
             cv2.createTrackbar('Gain', win, to_pos(gain_db, g_min, g_max), 1000, lambda v: None)
             cv2.createTrackbar('FPS', win, to_pos(fps, f_min, f_max), 1000, lambda v: None)
+            # Sliders para confianzas (0.0-1.0 -> 0-1000)
+            cv2.createTrackbar('YOLO Conf', win, to_pos(yolo_conf, 0.0, 1.0), 1000, lambda v: None)
+            cv2.createTrackbar('Clf Conf', win, to_pos(classifier_conf, 0.0, 1.0), 1000, lambda v: None)
 
             font = cv2.FONT_HERSHEY_SIMPLEX
             log_info("⚙️ Ventana CONFIG abierta")
@@ -457,10 +479,14 @@ def _show_config_window(camera):
                 pos_expo = cv2.getTrackbarPos('Exposure', win)
                 pos_gain = cv2.getTrackbarPos('Gain', win)
                 pos_fps = cv2.getTrackbarPos('FPS', win)
+                pos_yolo_conf = cv2.getTrackbarPos('YOLO Conf', win)
+                pos_clf_conf = cv2.getTrackbarPos('Clf Conf', win)
 
                 new_expo = max(et_min, min(et_max, from_pos(pos_expo, et_min, et_max)))
                 new_gain = max(g_min, min(g_max, from_pos(pos_gain, g_min, g_max)))
                 new_fps = max(f_min, min(f_max, from_pos(pos_fps, f_min, f_max)))
+                new_yolo_conf = max(0.0, min(1.0, from_pos(pos_yolo_conf, 0.0, 1.0)))
+                new_classifier_conf = max(0.0, min(1.0, from_pos(pos_clf_conf, 0.0, 1.0)))
 
                 # Aplicar con garantías (desactivar autos por si el SDK los re-activa)
                 read_expo = set_exposure_us(camera, float(new_expo))
@@ -472,7 +498,7 @@ def _show_config_window(camera):
 
                 read_fps = set_fps(camera, float(new_fps))
 
-                img = np.zeros((420, 760, 3), dtype=np.uint8)
+                img = np.zeros((520, 760, 3), dtype=np.uint8)
                 y = 30
                 cv2.putText(img, "CONFIGURACION (editable)", (16, y), font, 0.9, (0,255,0), 2); y += 28
                 cv2.putText(img, f"Exposure range(us): {int(et_min)}..{int(et_max)}", (16, y), font, 0.5, (160,160,160), 1); y += 18
@@ -487,7 +513,11 @@ def _show_config_window(camera):
                 except Exception:
                     disp_fps = float(new_fps)
                 cv2.putText(img, f"FPS: {disp_fps:.1f}", (16, y), font, 0.6, (200,200,0), 2); y += 30
-                cv2.putText(img, "ENTER=Guardar  |  ESC=Restaurar y cerrar", (16, 400), font, 0.6, (180,180,180), 1)
+                # Confianzas de modelos
+                cv2.putText(img, "--- Modelos ---", (16, y), font, 0.6, (0,255,255), 2); y += 25
+                cv2.putText(img, f"YOLO Confidence: {new_yolo_conf:.3f}", (16, y), font, 0.6, (200,200,0), 2); y += 22
+                cv2.putText(img, f"Classifier Confidence: {new_classifier_conf:.3f}", (16, y), font, 0.6, (200,200,0), 2); y += 30
+                cv2.putText(img, "ENTER=Guardar  |  ESC=Restaurar y cerrar", (16, 500), font, 0.6, (180,180,180), 1)
 
                 cv2.imshow(win, img)
                 k = cv2.waitKey(40) & 0xFF
@@ -525,8 +555,47 @@ def _show_config_window(camera):
             except Exception:
                 pass
 
-            # Restaurar valores si se canceló (ESC)
-            if not accepted:
+            # Guardar o restaurar valores
+            if accepted:
+                # Guardar valores de confianza en config_model.yaml
+                try:
+                    config_model = load_yaml_config("config_model.yaml", silent=True)
+                    if "yolo" not in config_model:
+                        config_model["yolo"] = {}
+                    if "classifier" not in config_model:
+                        config_model["classifier"] = {}
+                    
+                        config_model["yolo"]["confidence_threshold"] = new_yolo_conf
+                        config_model["classifier"]["bad_threshold"] = new_classifier_conf  # Guardar en bad_threshold
+                    
+                    # Buscar el archivo config_model.yaml
+                    config_path = None
+                    search_paths = [
+                        "vision_app/config_model.yaml",
+                        os.path.join(os.path.dirname(__file__), "..", "config_model.yaml"),
+                        "config_model.yaml",
+                    ]
+                    env_config_path = os.environ.get("CONFIG_MODEL")
+                    if env_config_path:
+                        search_paths.insert(0, env_config_path)
+                    
+                    for path in search_paths:
+                        abs_path = os.path.abspath(path)
+                        if os.path.exists(abs_path):
+                            config_path = abs_path
+                            break
+                    
+                    if config_path:
+                        with open(config_path, 'w', encoding='utf-8') as f:
+                            yaml.dump(config_model, f, default_flow_style=False, allow_unicode=True)
+                        log_info(f"✅ Confianzas guardadas en {config_path}")
+                        log_info(f"   YOLO: {new_yolo_conf:.3f}, Clasificador: {new_classifier_conf:.3f}")
+                    else:
+                        log_warning("⚠️ No se encontró config_model.yaml para guardar confianzas")
+                except Exception as e:
+                    log_error(f"❌ Error guardando confianzas: {e}")
+            else:
+                # Restaurar valores si se canceló (ESC)
                 try:
                     set_exposure_us(camera, float(orig_expo))
                     safe_set(camera, 'GainAuto', 'Off')
