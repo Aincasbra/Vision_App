@@ -99,7 +99,8 @@ class App:
         self.recorder = Recorder(out_dir=os.path.join(os.path.dirname(__file__), "Videos_YOLO"))
         
         # TimingsLogger para mediciones de inicialización y pipeline
-        log_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
+        # Usar el mismo directorio que el resto de logs: /var/log/vision_app
+        log_dir = os.environ.get("LOG_DIR", "/var/log/vision_app")
         os.makedirs(log_dir, exist_ok=True)
         self.timings_logger = TimingsLogger(log_dir=log_dir, enable_stats=True, report_interval=50)
     
@@ -250,6 +251,11 @@ class App:
                 camera_config = self.camera.config
             
             # Pasar timings_logger al context para que DetectionService lo use
+            # Asegurar que use la ruta correcta (DetectionService también lo verificará)
+            log_dir = os.environ.get("LOG_DIR", "/var/log/vision_app")
+            if hasattr(self.timings_logger, 'log_dir') and self.timings_logger.log_dir != log_dir:
+                self.timings_logger.log_dir = log_dir
+                self.timings_logger.csv_path = os.path.join(log_dir, "timings", "timings_log.csv")
             self.context.timings_logger = self.timings_logger
             
             # Iniciar servicio de inferencia YOLO

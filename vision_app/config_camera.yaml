@@ -11,7 +11,7 @@ camera_params:
   # Tiempo de exposición en microsegundos (µs)
   # Mismas unidades que se muestran en la ventana INFO (ExposureTime)
   # Valores típicos: 1000-20000 µs (1-20 ms)
-  exposure_time_us: 2408.0
+  exposure_time_us: 1700.0
   
   # Ganancia en dB (decibelios)
   # Mismas unidades que se muestran en la ventana INFO (Gain)
@@ -21,7 +21,7 @@ camera_params:
   # FPS (frames por segundo)
   # Mismas unidades que se muestran en la ventana INFO (AcqFrameRate)
   # Valores típicos: 10-30 FPS
-  fps: 28.7
+  fps: 29.5
   
   # Modo de exposición (solo GenICam)
   # Valores: "Off" (manual), "Once" (auto una vez), "Continuous" (auto continuo)
@@ -74,8 +74,10 @@ work_zone:
   # 
   # Tolerancia: distancia máxima permitida desde la línea central (en píxeles)
   # Valores típicos: 20-50px (depende del tamaño del bote y velocidad de la cinta)
+  # AJUSTADO según logs: botes detectados entre 524-798px de altura
+  # Aumentado a 200px para capturar botes que vienen seguidos (algunos pueden estar ligeramente descentrados)
   axis: "vertical"        # "vertical" = línea horizontal (cinta horizontal), "horizontal" = línea vertical (cinta vertical)
-  tolerance: 20           # Tolerancia en píxeles desde la línea central
+  tolerance: 200           # Tolerancia en píxeles desde la línea central (aumentado para botes seguidos)
   # radius: 50            # (legacy, se usa como tolerance si tolerance no está definido)
 
 # Configuración de tamaños de bote esperados (OPCIONAL)
@@ -84,11 +86,13 @@ work_zone:
 # Valores por defecto si no se configura:
 #   min_width: 60, max_width: 95, min_height: 60, max_height: 95, margin: 5
 bottle_sizes:
-  min_width: 100        # Ancho mínimo en píxeles (ajustar según tamaño real del bote)
-  max_width: 1000           # Ancho máximo en píxeles (ajustar según tamaño real del bote)
-  min_height: 100          # Altura mínima en píxeles (ajustar según tamaño real del bote)
-  max_height: 1600          # Altura máxima en píxeles (ajustar según tamaño real del bote)
-  margin: 10               # Margen de borde para validar que está completo (píxeles)
+  # AJUSTADO según logs reales: botes detectados 596-858px ancho, 524-798px alto
+  # Valores con margen de seguridad: ±50px para variaciones normales
+  min_width: 550        # Ancho mínimo en píxeles (datos reales: min=596px, margen de seguridad)
+  max_width: 1100           # Ancho máximo en píxeles (datos reales: max=858px, margen de seguridad)
+  min_height: 500          # Altura mínima en píxeles (datos reales: min=524px, margen de seguridad)
+  max_height: 1000          # Altura máxima en píxeles (datos reales: max=798px, margen de seguridad)
+  margin: 5               # Margen de borde para validar que está completo (píxeles) - mínimo para evitar cortes extremos
 
 # Configuración POR CÁMARA (opcional - sobrescribe configuración global)
 # ----------------------------------------------------------------------------

@@ -173,6 +173,32 @@ def clf_load(model_path: str = "") -> bool:
         if _MODEL is not None:
             _MODEL.eval()
             _MODEL.to(dev)
+            
+            # OPTIMIZACIÓN: Usar half precision (FP16) para acelerar en GPU
+            if dev.type == 'cuda' and torch.cuda.is_available():
+                try:
+                    _MODEL = _MODEL.half()  # Convertir a FP16 para mayor velocidad
+                    from core.logging import log_info
+                    log_info("✅ Clasificador optimizado con FP16 (half precision)")
+                except Exception as e:
+                    from core.logging import log_warning
+                    log_warning(f"⚠️ No se pudo convertir a FP16: {e}, usando FP32")
+            
+            # OPTIMIZACIÓN: Precalentar el modelo (warmup) para evitar el primer forward lento
+            try:
+                with torch.no_grad():
+                    dummy_input = torch.randn(1, 3, 224, 224).to(dev)
+                    if dev.type == 'cuda' and hasattr(_MODEL, 'half') and next(_MODEL.parameters()).dtype == torch.float16:
+                        dummy_input = dummy_input.half()
+                    _MODEL(dummy_input)  # Warmup
+                    if dev.type == 'cuda':
+                        torch.cuda.synchronize()  # Sincronizar para asegurar que el warmup termine
+                from core.logging import log_info
+                log_info("✅ Clasificador precalentado (warmup completado)")
+            except Exception as e:
+                from core.logging import log_warning
+                log_warning(f"⚠️ No se pudo precalentar el modelo: {e}")
+                
         return _MODEL is not None
     except FileNotFoundError:
         from core.logging import log_error
@@ -225,18 +251,26 @@ def clf_predict_bgr(bgr_roi: np.ndarray) -> Tuple[str, float, List[float]]:
         rgb_img = cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2RGB)
         
         # Aplicar transform y mover a dispositivo
-        tensor_img = transform(rgb_img).unsqueeze(0).to(_device())
+        dev = _device()
+        tensor_img = transform(rgb_img).unsqueeze(0).to(dev)
+        
+        # OPTIMIZACIÓN: Convertir a half precision si el modelo está en FP16
+        if dev.type == 'cuda' and hasattr(_MODEL, 'half') and next(_MODEL.parameters()).dtype == torch.float16:
+            tensor_img = tensor_img.half()
         
         # Inferencia con torch.no_grad() (ya optimizado)
         with torch.no_grad():
             outputs = _MODEL(tensor_img)
             probabilities = torch.softmax(outputs, dim=1)
-            # Optimizado: mover a CPU y convertir a numpy en una operación
-            prob_np = probabilities.cpu().numpy().squeeze()
-        
-        # Optimizado: usar argmax de NumPy (más eficiente que torch)
-        idx = int(np.argmax(prob_np))
-        confidence = float(prob_np[idx])
+            
+            # OPTIMIZACIÓN: Usar torch.argmax en GPU (más rápido que mover a CPU primero)
+            # Solo mover a CPU lo mínimo necesario
+            idx = int(torch.argmax(probabilities, dim=1).item())
+            confidence = float(probabilities[0, idx].item())
+            
+            # Mover a CPU solo para obtener la lista completa (si es necesario)
+            # Convertir a float32 antes de numpy para compatibilidad
+            prob_np = probabilities.float().cpu().numpy().squeeze()
         
         # Convertir a lista solo al final (necesario para el return type)
         # NOTA: No filtramos por confidence_threshold aquí. El filtrado se hace en detection_service.py

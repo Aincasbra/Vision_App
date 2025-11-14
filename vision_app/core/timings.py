@@ -113,25 +113,40 @@ class TimingsLogger:
             with open(self.csv_path, "a", newline="") as tf:
                 tw = csv.writer(tf)
                 if new_file:
+                    # Columnas del CSV de timings:
+                    # - iso_ts: timestamp ISO del frame
+                    # - frame_id: ID del frame procesado
+                    # - yolo_ms: tiempo de detección YOLO (inferencia del modelo)
+                    # - parse_ms: tiempo de parsing de resultados YOLO (extraer bboxes, confs, clases)
+                    # - nms_ms: tiempo de Non-Maximum Suppression (fusionar detecciones superpuestas)
+                    # - validation_ms: tiempo de validación del bote (centrado, tamaño, completitud)
+                    # - crop_ms: tiempo de recortar el bote de la imagen
+                    # - forward_ms: tiempo del forward pass del clasificador (inferencia del modelo)
+                    # - classify_ms: tiempo total de clasificación (crop_ms + forward_ms, redundante pero útil)
+                    # - csv_ms: tiempo de escribir en el CSV de vision
+                    # - images_ms: tiempo de guardar imágenes (frame completo + crop clasificado)
+                    # - total_ms: tiempo total desde inicio hasta guardado de imágenes
                     tw.writerow(["iso_ts","frame_id","yolo_ms","parse_ms","nms_ms","validation_ms","crop_ms","forward_ms","classify_ms","csv_ms","images_ms","total_ms"]) 
                 now_iso = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                # Obtener marcas temporales (con fallbacks si no existen)
                 t_yolo = self.marks.get('yolo', self.t0)
-                t_crop = self.marks.get('crop', t_yolo)
-                t_clf = self.marks.get('clf', t_crop)
-                t_csv = self.marks.get('csv', t_clf)
-                t_img = self.marks.get('images', t_csv)
-                # Calcular tiempos (soporta nuevas marcas: parse, nms, validation)
                 t_parse = self.marks.get('parse', t_yolo)
                 t_nms = self.marks.get('nms', t_parse)
                 t_validation = self.marks.get('validation', t_nms)
+                t_crop = self.marks.get('crop', t_validation)
+                t_forward = self.marks.get('forward', t_crop)  # Forward pass del clasificador
+                t_clf = self.marks.get('clf', t_forward)  # Fin de clasificación completa
+                t_csv = self.marks.get('csv', t_clf)
+                t_img = self.marks.get('images', t_csv)
                 
+                # Calcular tiempos en milisegundos
                 yolo_ms = (t_yolo - self.t0) * 1000.0
                 parse_ms = (t_parse - t_yolo) * 1000.0
                 nms_ms = (t_nms - t_parse) * 1000.0
                 validation_ms = (t_validation - t_nms) * 1000.0
                 crop_ms = (t_crop - t_validation) * 1000.0 if t_validation != t_nms else (t_crop - t_nms) * 1000.0
-                forward_ms = (t_clf - t_crop) * 1000.0
-                classify_ms = crop_ms + forward_ms
+                forward_ms = (t_forward - t_crop) * 1000.0  # Tiempo del forward pass del clasificador
+                classify_ms = crop_ms + forward_ms  # Tiempo total de clasificación (crop + forward)
                 csv_ms = (t_csv - t_clf) * 1000.0
                 images_ms = (t_img - t_csv) * 1000.0
                 total_ms = (t_img - self.t0) * 1000.0

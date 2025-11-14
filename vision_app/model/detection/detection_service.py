@@ -217,9 +217,9 @@ class DetectionService:
         # En producción (300 botes/minuto), los botes pasan continuamente por la misma posición.
         # El cooldown es por frames: cuando un bote pasa por el centro y es válido, se procesa.
         # Después del cooldown, si hay otro bote válido en el centro, se procesa (es un bote nuevo).
-        # Un frame por bote cuando está en el centro.
+        # Reducido a 1 frame para permitir procesar botes que vienen seguidos (3 botes seguidos)
         self._last_processed_frame_id: int = -1  # Frame ID del último bote procesado
-        self._bottle_processing_cooldown: int = 2  # Frames de espera antes de procesar otro bote
+        self._bottle_processing_cooldown: int = 1  # Frames de espera antes de procesar otro bote (reducido para botes seguidos)
         
         # Estadísticas del clasificador (para UI)
         self._clf_total: int = 0  # Total de botes clasificados
@@ -457,14 +457,23 @@ class DetectionService:
                 self._csv_file = None
         if self._images_enabled:
             try:
-                self._images_mgr = ImagesManager()
+                # ImagesManager: pasar base_dir explícitamente usando self._log_dir (igual que timings)
+                images_base_dir = os.path.join(self._log_dir, "images")
+                self._images_mgr = ImagesManager(base_dir=images_base_dir)
             except Exception as e:
                 log_warning(f"⚠️ No se pudo iniciar ImagesManager: {e}", logger_name="images")
-        # Timings logger (comparte estadísticas con el de app.py si está disponible)
-        # Si hay un timings_logger en el context, usarlo; si no, crear uno nuevo
+        # Timings logger: SIEMPRE usar el mismo del context (creado en app.py)
+        # Esto asegura que todas las mediciones (inicialización + pipeline) se guarden en el mismo CSV
         if self.context and hasattr(self.context, 'timings_logger') and self.context.timings_logger is not None:
+            # Usar el logger compartido del context (el mismo que mide inicialización en app.py)
             self._tlogger = self.context.timings_logger
+            # Asegurar que use la misma ruta base que el resto de logs
+            self._tlogger.log_dir = self._log_dir
+            self._tlogger.csv_path = os.path.join(self._log_dir, "timings", "timings_log.csv")
         else:
+            # Si no hay logger en el context (no debería pasar), crear uno nuevo con la misma ruta
+            from core.logging import log_warning
+            log_warning("⚠️ No hay timings_logger en context, creando uno nuevo. Esto no debería pasar.", logger_name="timings")
             self._tlogger = TimingsLogger(self._log_dir, enable_stats=True, report_interval=50)
         while self._running:
             try:
@@ -598,16 +607,16 @@ class DetectionService:
                                 bbox_w = float(first_box[2] - first_box[0])
                                 bbox_h = float(first_box[3] - first_box[1])
                                 
-                                # is_valid, reason = is_bottle_ready(
-                                #     xyxy, 
-                                #     builtins.latest_frame.shape, 
-                                #     self._work_zone,
-                                #     self._bottle_sizes
-                                # )
-                                # # Marcar fin de validación
-                                # self._tlogger.mark('validation')
-                                is_valid = True # hardcodeado para DEBUG
-                                reason = "debug_always_valid"
+                                # Validar si el bote está listo para procesamiento
+                                # VALIDACIONES MUY PERMISIVAS para empezar (ajustar después según resultados)
+                                is_valid, reason = is_bottle_ready(
+                                    xyxy, 
+                                    builtins.latest_frame.shape, 
+                                    self._work_zone,
+                                    self._bottle_sizes
+                                )
+                                # Marcar fin de validación
+                                self._tlogger.mark('validation')
                                 
                                 # Verificar cooldown para evitar procesar el mismo bote múltiples veces
                                 # En producción (300 botes/minuto), los botes pasan continuamente por la misma posición.
@@ -689,13 +698,15 @@ class DetectionService:
                                     y2 = np.clip(y2, 0, h_img)
                                     crop_for_classification = frame_to_process[y1:y2, x1:x2].copy()
                                     if crop_for_classification.size > 0:
-                                        self._tlogger.mark('crop')
-                                        # Clasificar el bote recortado
+                                        self._tlogger.mark('crop')  # Marca fin de crop
+                                        # Clasificar el bote recortado (forward pass del clasificador)
                                         clf_label, clf_conf, _ = clf_predict_bgr(crop_for_classification)
-                                    t_clf_end = time.time(); self._tlogger.mark('clf')
+                                        self._tlogger.mark('forward')  # Marca fin de forward pass del clasificador
+                                    self._tlogger.mark('clf')  # Marca fin de clasificación completa (crop + forward)
                                 except Exception as e:
                                     log_warning(f"⚠️ Error en clasificación: {e}")
-                                    t_clf_end = time.time(); self._tlogger.mark('clf')
+                                    # Marcar clf incluso si hay error (para mantener consistencia de timings)
+                                    self._tlogger.mark('clf')
                                 
                                 # 6.3: Determinar veredicto (ok/bad) según política
                                 # Política: prioriza buenas; solo marca "bad" si confianza >= umbral

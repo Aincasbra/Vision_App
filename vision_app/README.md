@@ -253,7 +253,7 @@ Columnas: `timestamp`, `frame_id`, `num_boxes`, `classes`, `avg_conf`, `proc_ms`
 Columnas: `timestamp`, `tipo`, `path`, `reason`, `avg_conf`, `class`, `track_id`
 
 #### `timings.csv`
-Columnas: `timestamp`, `frame_id`, `yolo_ms`, `crop_ms`, `forward_ms`, `classify_ms`, `csv_ms`, `images_ms`, `total_ms`
+Columnas: `iso_ts`, `frame_id`, `yolo_ms`, `parse_ms`, `nms_ms`, `validation_ms`, `crop_ms`, `forward_ms`, `classify_ms`, `csv_ms`, `images_ms`, `total_ms`
 
 ## 🔧 Optimizaciones
 

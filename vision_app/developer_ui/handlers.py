@@ -22,6 +22,11 @@ def handle_action(app, action):
     """Despacha acciones del panel. 'app' es instancia de App."""
     from core.logging import log_info, log_warning, log_error
     if action == "RUN":
+        # Verificar que la cámara esté inicializada
+        if app.camera is None:
+            log_error("❌ Error iniciando backend: La cámara no está inicializada")
+            return {}
+        
         # El ROI ya se configura automáticamente en camera.start() desde config_camera.yaml
         # Solo guardamos el offsetY en builtins para compatibilidad con código existente
         try:
